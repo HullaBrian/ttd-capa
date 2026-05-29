@@ -30,6 +30,7 @@ dump is the right seam between native replay and Python matching.
 ttd-capa/
 ├── README.md                         # this file
 ├── ttd-capa.py                       # one-command wrapper (extract + capa)
+├── ttd-timeline.py                   # trace-ordered timeline of capabilities / calls
 ├── tests/
 │   ├── test_ttd_extractor.py         # parity check: dump features per scope
 │   └── sample.ttd.json               # tiny schema fixture
@@ -150,6 +151,40 @@ ttdcapa-extract <trace.run> [--sample <sample.exe>] [-o <out.json>]
 `--sample` supplies the on-disk binary for accurate MD5/SHA hashes (the trace itself
 doesn't carry them). Without `-o`, the report is written to stdout; progress goes to
 stderr.
+
+### Timeline — navigate matches in WinDbg (`ttd-timeline.py`)
+
+`-v`/`-vv` group matches by rule; when you instead want to walk the trace *in execution
+order* and jump to each event in WinDbg, use the timeline script. It reads a TTD report
+and prints rows ordered by **TTD position** (`Sequence:Steps`, exactly what WinDbg
+shows). Two modes:
+
+```powershell
+# capability timeline: every capability that fired at call / span scope, in trace order,
+# each tagged with its TTD position, thread id, namespace, and the triggering call
+python ttd-timeline.py build\beacon.ttd.json -r capa-9.4.0\rules
+
+# call timeline: every recorded API call in trace order (no rules needed)
+python ttd-timeline.py build\beacon.ttd.json --calls
+```
+
+```
+TTD POS      TID  CAPABILITY                           NAMESPACE                 TRIGGERING CALL
+2A1F:3C4       4  link function at runtime on Windows  linking/runtime-linking   kernel32.GetProcAddress(0x7ffa6a180000, 'CreateThread', ...) -> 0x7ffa6a163100
+```
+
+To jump there in WinDbg, paste the `TTD POS` into the time-travel position box (or run
+`!tt 2A1F:3C4`). Integer arguments and return values are shown in hex. `--limit N` caps
+the rows. Capabilities that only match at process/thread/file scope have no single
+navigable position and are listed separately at the end.
+
+> Positions are populated by the extractor's `position` field. Reports produced before
+> that field existed fall back to the synthetic `seq` counter (shown as `seq=N`); re-run
+> the extractor to get real navigable positions.
+
+Run it with the capa venv's interpreter (e.g. `capa-9.4.0\.venv\Scripts\python.exe`) so
+capa's dependencies are importable; the script adds the bundled `capa-9.4.0` tree to
+`sys.path` itself, so it works from any directory.
 
 ---
 
