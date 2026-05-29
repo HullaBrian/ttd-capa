@@ -246,6 +246,7 @@ void write_report(std::ostream& os, const std::string& arch, const std::string& 
             w.begin_object();
             w.member("tid", call.tid);
             w.member("seq", call.seq);
+            w.member("position", call.position);
             w.member("module", call.module);
             w.member("api", call.api);
             w.key("args");
@@ -463,6 +464,16 @@ int wmain(int argc, wchar_t** argv) {
             rec.seq = seq++;
             rec.module = it->second.first;
             rec.api = it->second.second;
+
+            // The navigable TTD position of this CALL, as WinDbg shows it:
+            // "Sequence:Steps" in hex. Paste it into WinDbg's time-travel position
+            // box (or `!tt Sequence:Steps`) to jump straight to this instruction.
+            Position pos = thread->GetPosition();
+            char posbuf[40];
+            std::snprintf(posbuf, sizeof(posbuf), "%llX:%llX",
+                          static_cast<unsigned long long>(pos.Sequence),
+                          static_cast<unsigned long long>(pos.Steps));
+            rec.position = posbuf;
 
             // GetCrossPlatformContext returns by value; bind to a local before
             // taking its address (the result is a temporary, not an l-value).

@@ -31,6 +31,7 @@
         {
           "tid": 100,
           "seq": 10,
+          "position": "1A:4F",
           "module": "kernel32",
           "api": "CreateFileA",
           "args": [ "C:\\temp\\out.bin", 1073741824 ],

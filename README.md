@@ -175,6 +175,7 @@ The contract between the extractor and the CAPA backend — one self-describing 
     "calls": [{
       "tid": 100,
       "seq": 12345,                  // monotonic order, consistent with the timeline
+      "position": "1A:4F",           // navigable TTD position "Sequence:Steps" (hex)
       "module": "kernel32",          // resolved owning module (no extension)
       "api": "CreateFileA",          // resolved export name
       "args": [ "C:\\path", 1073741824 ],  // strings + ints, natural call order
@@ -188,6 +189,10 @@ The contract between the extractor and the CAPA backend — one self-describing 
   match variants (`kernel32.CreateFileA`, `CreateFileA`, `CreateFile`, …).
 - `args` are emitted in natural call order; `call.py` reverses them to match the
   disassembly convention (as CAPE/DRAKVUF do).
+- `position` is the TTD "Sequence:Steps" (hex) of the CALL, as WinDbg shows it. CAPA
+  appends it to each rendered call (` @TTD 1A:4F`), so in `-vv`/`-j` output every match
+  carries the exact timeline location plus its `{pid,tid,call}` header — paste the
+  position into WinDbg's time-travel box (or `!tt 1A:4F`) to jump straight to the call.
 - Everything the matcher needs is in this file — no `.run` access from Python.
 
 ---

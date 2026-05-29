@@ -44,6 +44,7 @@ using ArgValue = std::variant<int64_t, std::string>;
 struct CallRecord {
     uint64_t tid = 0;   // TTD UniqueThreadId
     uint64_t seq = 0;   // monotonic record order (consistent with timeline order)
+    std::string position; // TTD navigable position "Sequence:Steps" (hex), for WinDbg
     std::string module; // resolved owning module, e.g. "kernel32" (no extension)
     std::string api;    // resolved export name, e.g. "CreateFileA"
     std::vector<ArgValue> args;
