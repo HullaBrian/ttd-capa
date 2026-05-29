@@ -1,0 +1,96 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup Label="ProjectConfigurations">
+    <ProjectConfiguration Include="Debug|x64">
+      <Configuration>Debug</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Release|x64">
+      <Configuration>Release</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+  </ItemGroup>
+  <PropertyGroup Label="Globals">
+    <VCProjectVersion>17.0</VCProjectVersion>
+    <ProjectGuid>{B2D4A1C7-3E5F-4A9B-9C2D-1F6E7A8B0C11}</ProjectGuid>
+    <RootNamespace>ttdcapaextract</RootNamespace>
+    <WindowsTargetPlatformVersion>10.0</WindowsTargetPlatformVersion>
+    <!-- Must match the installed Microsoft.TimeTravelDebugging.Apis NuGet version. -->
+    <TTDApiVersion>0.9.5</TTDApiVersion>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
+  <PropertyGroup Condition="'$(Configuration)'=='Debug'" Label="Configuration">
+    <ConfigurationType>Application</ConfigurationType>
+    <UseDebugLibraries>true</UseDebugLibraries>
+    <PlatformToolset>v145</PlatformToolset>
+    <CharacterSet>Unicode</CharacterSet>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)'=='Release'" Label="Configuration">
+    <ConfigurationType>Application</ConfigurationType>
+    <UseDebugLibraries>false</UseDebugLibraries>
+    <PlatformToolset>v145</PlatformToolset>
+    <WholeProgramOptimization>true</WholeProgramOptimization>
+    <CharacterSet>Unicode</CharacterSet>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
+  <!-- TTD NuGet props: wires up include + library search paths.
+       Without this you get "unresolved external symbol CreateReplayEngine". -->
+  <Import Project="packages\Microsoft.TimeTravelDebugging.Apis.$(TTDApiVersion)\build\native\Microsoft.TimeTravelDebugging.Apis.props" Condition="Exists('packages\Microsoft.TimeTravelDebugging.Apis.$(TTDApiVersion)\build\native\Microsoft.TimeTravelDebugging.Apis.props')" />
+  <ItemDefinitionGroup>
+    <ClCompile>
+      <LanguageStandard>stdcpp20</LanguageStandard>
+      <WarningLevel>Level3</WarningLevel>
+      <SDLCheck>true</SDLCheck>
+      <PreprocessorDefinitions>WIN32_LEAN_AND_MEAN;NOMINMAX;_CRT_SECURE_NO_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <MultiProcessorCompilation>true</MultiProcessorCompilation>
+    </ClCompile>
+    <Link>
+      <SubSystem>Console</SubSystem>
+      <AdditionalDependencies>TTDReplay.lib;bcrypt.lib;%(AdditionalDependencies)</AdditionalDependencies>
+    </Link>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)'=='Release'">
+    <ClCompile>
+      <Optimization>MaxSpeed</Optimization>
+      <FunctionLevelLinking>true</FunctionLevelLinking>
+      <IntrinsicFunctions>true</IntrinsicFunctions>
+    </ClCompile>
+    <Link>
+      <EnableCOMDATFolding>true</EnableCOMDATFolding>
+      <OptimizeReferences>true</OptimizeReferences>
+    </Link>
+  </ItemDefinitionGroup>
+  <ItemGroup>
+    <ClCompile Include="src\main.cpp" />
+    <ClCompile Include="src\json_writer.cpp" />
+    <ClCompile Include="src\guest_pe.cpp" />
+    <ClCompile Include="src\hashes.cpp" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="src\json_writer.h" />
+    <ClInclude Include="src\guest_pe.h" />
+    <ClInclude Include="src\hashes.h" />
+    <ClInclude Include="src\records.h" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="packages.config" />
+  </ItemGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
+  <!-- Fail early with a helpful message if NuGet packages were not restored. -->
+  <Target Name="EnsureTTDPackage" BeforeTargets="PrepareForBuild">
+    <Error Condition="!Exists('packages\Microsoft.TimeTravelDebugging.Apis.$(TTDApiVersion)\build\native\Microsoft.TimeTravelDebugging.Apis.props')" Text="Missing Microsoft.TimeTravelDebugging.Apis $(TTDApiVersion). Run 'nuget restore' (or restore packages in Visual Studio) before building." />
+  </Target>
+  <!-- Deploy the runtime DLLs next to the .exe. Download them once via
+       TTD\ReplayApi\GetTtd\Get-Ttd.ps1 (see ReplayAPI.md section 2, step 4),
+       then point TTDRuntimeDir at the platform folder, or drop the DLLs into
+       packages\...\build\native\bin\x64\ so this copy picks them up. -->
+  <PropertyGroup>
+    <TTDRuntimeDir Condition="'$(TTDRuntimeDir)'==''">packages\Microsoft.TimeTravelDebugging.Apis.$(TTDApiVersion)\build\native\bin\x64</TTDRuntimeDir>
+  </PropertyGroup>
+  <Target Name="CopyTTDRuntime" AfterTargets="Build">
+    <ItemGroup>
+      <TTDRuntime Include="$(TTDRuntimeDir)\TTDReplay.dll;$(TTDRuntimeDir)\TTDReplayCPU.dll" />
+    </ItemGroup>
+    <Copy SourceFiles="@(TTDRuntime)" DestinationFolder="$(OutDir)" SkipUnchangedFiles="true" Condition="'@(TTDRuntime)'!=''" ContinueOnError="true" />
+  </Target>
+</Project>

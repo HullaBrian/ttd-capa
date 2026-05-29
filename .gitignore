@@ -1,0 +1,42 @@
+# ---- C++ extractor build artifacts (Visual Studio / MSBuild) ----
+ttd/.vs/
+ttd/x64/
+ttd/ttdcapa-extract/
+ttd/**/*.obj
+ttd/**/*.pdb
+ttd/**/*.ilk
+ttd/**/*.idb
+ttd/**/*.ipdb
+ttd/**/*.iobj
+ttd/**/*.tlog
+ttd/**/*.log
+ttd/**/*.recipe
+ttd/*.vcxproj.user
+
+# Restored NuGet package (re-restored on build from packages.config)
+ttd/packages/
+
+# ---- deployment / scratch ----
+# build/ holds the deployed exe + TTD runtime DLLs; ignore generated outputs only
+build/*.json
+build/*.log
+build/*.run
+build/*.idx
+
+# ---- TTD traces (large; keep out of VCS) ----
+*.run
+*.idx
+
+# ---- generated TTD reports ----
+*.ttd.json
+
+# ---- Python ----
+__pycache__/
+*.pyc
+.venv/
+capa-9.4.0/.venv/
+
+# keep the small schema fixture used by the parity test
+!tests/sample.ttd.json
+/build
+/capa-9.4.0
