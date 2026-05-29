@@ -354,16 +354,27 @@ def render_rules(console: Console, doc: rd.ResultDocument):
                 elif rule.meta.scopes.dynamic == capa.rules.Scope.THREAD:
                     lines = [render_thread(doc.meta.analysis.layout, loc) for loc in locations]
                 elif rule.meta.scopes.dynamic in (capa.rules.Scope.CALL, capa.rules.Scope.SPAN_OF_CALLS):
-                    # because we're only in verbose mode, we won't show the full call details (name, args, retval)
-                    # we'll only show the details of the thread in which the calls are found.
-                    # so select the thread locations and render those.
-                    thread_locations = set()
+                    # in verbose mode we don't show the full call details (args, retval),
+                    # but we keep the containing thread and, when the extractor supplies one
+                    # (the TTD backend does), the navigable trace position of each call so the
+                    # analyst can jump straight to it. backends without a position (CAPE,
+                    # DRAKVUF) carry no marker and collapse to one line per thread as before.
+                    lines = []
+                    seen: set[str] = set()
                     for loc in locations:
                         cloc = loc.to_capa()
                         assert isinstance(cloc, capa.features.address.DynamicCallAddress)
-                        thread_locations.add(frz.Address.from_capa(cloc.thread))
+                        thread_addr = frz.Address.from_capa(cloc.thread)
+                        line = render_thread(doc.meta.analysis.layout, thread_addr)
 
-                    lines = [render_thread(doc.meta.analysis.layout, loc) for loc in thread_locations]
+                        cname = _get_call_name(doc.meta.analysis.layout, loc)
+                        marker = " @TTD "
+                        if marker in cname:
+                            line = f"{line} @TTD {cname.split(marker, 1)[1].strip()}"
+
+                        if line not in seen:
+                            seen.add(line)
+                            lines.append(line)
                 else:
                     capa.helpers.assert_never(rule.meta.scopes.dynamic)
             else:
