@@ -29,7 +29,7 @@ from typing import Optional
 
 HERE = Path(__file__).resolve().parent
 # make the bundled capa importable regardless of the current working directory
-sys.path.insert(0, str(HERE / "capa-9.4.0"))
+sys.path.insert(0, str(HERE / "capa"))
 
 from capa.features.address import ProcessAddress, ThreadAddress, DynamicCallAddress  # noqa: E402
 from capa.features.extractors.ttd.models import TtdCall  # noqa: E402

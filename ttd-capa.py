@@ -33,9 +33,7 @@ def find_extractor(explicit: str | None) -> Path:
     # search common build output locations relative to this script
     candidates = [
         HERE / "ttdcapa-extract.exe",
-        HERE / "ttd" / "x64" / "Release" / "ttdcapa-extract.exe",
-        HERE / "ttd" / "x64" / "Debug" / "ttdcapa-extract.exe",
-        HERE / "ttd" / "ttdcapa-extract.exe",
+        HERE / "ttd" / "bin" / "x64" / "Release" / "ttdcapa-extract.exe",
     ]
     for c in candidates:
         if c.is_file():
