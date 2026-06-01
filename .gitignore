@@ -38,3 +38,5 @@ capa-9.4.0/.venv/
 
 # keep the small schema fixture used by the parity test
 !tests/sample.ttd.json
+*.dll
+/ttd/bin

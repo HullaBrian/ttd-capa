@@ -33,6 +33,15 @@
     <CharacterSet>Unicode</CharacterSet>
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
+  <!-- Keep build artifacts tidy and out of the source tree:
+         obj\<Platform>\<Config>\  intermediate files (.obj, .tlog, .ilk, compiler .pdb)
+         bin\<Platform>\<Config>\  final outputs (.exe, linker .pdb, deployed TTD DLLs)
+       Anchored to the project directory so the layout is the same no matter where
+       MSBuild/Visual Studio is invoked from. -->
+  <PropertyGroup>
+    <OutDir>$(MSBuildProjectDirectory)\bin\$(Platform)\$(Configuration)\</OutDir>
+    <IntDir>$(MSBuildProjectDirectory)\obj\$(Platform)\$(Configuration)\</IntDir>
+  </PropertyGroup>
   <!-- TTD NuGet props: wires up include + library search paths.
        Without this you get "unresolved external symbol CreateReplayEngine". -->
   <Import Project="packages\Microsoft.TimeTravelDebugging.Apis.$(TTDApiVersion)\build\native\Microsoft.TimeTravelDebugging.Apis.props" Condition="Exists('packages\Microsoft.TimeTravelDebugging.Apis.$(TTDApiVersion)\build\native\Microsoft.TimeTravelDebugging.Apis.props')" />
