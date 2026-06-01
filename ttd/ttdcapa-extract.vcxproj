@@ -62,15 +62,14 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="src\main.cpp" />
-    <ClCompile Include="src\json_writer.cpp" />
-    <ClCompile Include="src\guest_pe.cpp" />
-    <ClCompile Include="src\hashes.cpp" />
+    <ClCompile Include="src\ttd_pe_utils.cpp" />
+    <ClCompile Include="src\ttdutils.cpp" />
+    <ClCompile Include="src\utils.cpp" />
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="src\json_writer.h" />
-    <ClInclude Include="src\guest_pe.h" />
-    <ClInclude Include="src\hashes.h" />
-    <ClInclude Include="src\records.h" />
+    <ClInclude Include="src\ttd_pe_utils.hpp" />
+    <ClInclude Include="src\ttdutils.hpp" />
+    <ClInclude Include="src\utils.hpp" />
   </ItemGroup>
   <ItemGroup>
     <None Include="packages.config" />
@@ -92,5 +91,12 @@
       <TTDRuntime Include="$(TTDRuntimeDir)\TTDReplay.dll;$(TTDRuntimeDir)\TTDReplayCPU.dll" />
     </ItemGroup>
     <Copy SourceFiles="@(TTDRuntime)" DestinationFolder="$(OutDir)" SkipUnchangedFiles="true" Condition="'@(TTDRuntime)'!=''" ContinueOnError="true" />
+  </Target>
+  <Import Project="packages\nlohmann.json.3.12.0\build\native\nlohmann.json.targets" Condition="Exists('packages\nlohmann.json.3.12.0\build\native\nlohmann.json.targets')" />
+  <Target Name="EnsureNuGetPackageBuildImports" BeforeTargets="PrepareForBuild">
+    <PropertyGroup>
+      <ErrorText>This project references NuGet package(s) that are missing on this computer. Use NuGet Package Restore to download them.  For more information, see http://go.microsoft.com/fwlink/?LinkID=322105. The missing file is {0}.</ErrorText>
+    </PropertyGroup>
+    <Error Condition="!Exists('packages\nlohmann.json.3.12.0\build\native\nlohmann.json.targets')" Text="$([System.String]::Format('$(ErrorText)', 'packages\nlohmann.json.3.12.0\build\native\nlohmann.json.targets'))" />
   </Target>
 </Project>

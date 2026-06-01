@@ -1,16 +1,5 @@
-// Copyright 2024 Google LLC
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-
-#include "guest_pe.h"
+#include "ttd_pe_utils.hpp"
+#include "ttdutils.hpp"
 
 #include <algorithm>
 #include <array>
@@ -22,24 +11,20 @@
 #endif
 #include <windows.h>
 
+#include <TTD/IdnaBasicTypes.h>
+#include <TTD/IReplayEngineStl.h>
+
 namespace ttdcapa {
 namespace {
 
-// Read a trivially-copyable value at a guest address. Returns false if the full
-// object could not be read.
-template <typename T>
-bool read_obj(const GuestReader& read, uint64_t addr, T& out) {
-    return read(addr, &out, sizeof(T)) == sizeof(T);
-}
-
 // Read a NUL-terminated ASCII string at a guest address (bounded).
-std::string read_cstr(const GuestReader& read, uint64_t addr, size_t max_len = 512) {
+std::string readCSTR(TTD::Replay::UniqueCursor* cursor, TTD::GuestAddress addr, size_t maxLength = 512) {
     std::string s;
     s.reserve(64);
     char chunk[64];
-    while (s.size() < max_len) {
+    while (s.size() < maxLength) {
         size_t want = sizeof(chunk);
-        size_t got = read(addr + s.size(), chunk, want);
+        size_t got = readMemory(cursor, addr + s.size(), chunk, want);
         if (got == 0) {
             break;
         }
@@ -58,12 +43,12 @@ std::string read_cstr(const GuestReader& read, uint64_t addr, size_t max_len = 5
 
 // Locate the NT headers for the image at `base`. Returns the file-relative offset
 // of the NT headers (e_lfanew) and validates the PE/PE32+ signatures.
-bool read_nt_headers(const GuestReader& read, uint64_t base, IMAGE_NT_HEADERS64& nt) {
+bool readNTHeaders(TTD::Replay::UniqueCursor* cursor, TTD::GuestAddress moduleBaseAddress, IMAGE_NT_HEADERS64& nt) {
     IMAGE_DOS_HEADER dos{};
-    if (!read_obj(read, base, dos) || dos.e_magic != IMAGE_DOS_SIGNATURE) {
+    if (!readMemory(cursor, moduleBaseAddress, &dos, sizeof(dos)) || dos.e_magic != IMAGE_DOS_SIGNATURE) {
         return false;
     }
-    if (!read_obj(read, base + static_cast<uint32_t>(dos.e_lfanew), nt)) {
+    if (!readMemory(cursor, moduleBaseAddress + static_cast<uint32_t>(dos.e_lfanew), &nt, sizeof(nt))) {
         return false;
     }
     if (nt.Signature != IMAGE_NT_SIGNATURE ||
@@ -73,13 +58,13 @@ bool read_nt_headers(const GuestReader& read, uint64_t base, IMAGE_NT_HEADERS64&
     return true;
 }
 
-bool is_printable_ascii(unsigned char c) {
+bool isPrintableASCII(unsigned char c) {
     return c == '\t' || (c >= 0x20 && c <= 0x7e);
 }
 
 }  // namespace
 
-std::string module_basename(const std::wstring& full) {
+std::string getModuleBaseName(const std::wstring& full) {
     size_t slash = full.find_last_of(L"\\/");
     std::wstring name = (slash == std::wstring::npos) ? full : full.substr(slash + 1);
     size_t dot = name.find_last_of(L'.');
@@ -97,10 +82,9 @@ std::string module_basename(const std::wstring& full) {
     return out;
 }
 
-bool parse_exports(const GuestReader& read, uint64_t base, const std::string& /*module_name*/,
-                   std::vector<std::pair<uint64_t, std::string>>& out) {
+bool getModuleExports(TTD::Replay::UniqueCursor* cursor, TTD::GuestAddress moduleBaseAddress, std::vector<std::pair<uint64_t, std::string>>& out) {
     IMAGE_NT_HEADERS64 nt{};
-    if (!read_nt_headers(read, base, nt)) {
+    if (!readNTHeaders(cursor, moduleBaseAddress, nt)) {
         return false;
     }
 
@@ -110,7 +94,7 @@ bool parse_exports(const GuestReader& read, uint64_t base, const std::string& /*
     }
 
     IMAGE_EXPORT_DIRECTORY exp{};
-    if (!read_obj(read, base + dir.VirtualAddress, exp)) {
+    if (!readMemory(cursor, moduleBaseAddress + dir.VirtualAddress, &exp, sizeof(exp))) {
         return false;
     }
 
@@ -120,18 +104,18 @@ bool parse_exports(const GuestReader& read, uint64_t base, const std::string& /*
     // Walk the name table; each name maps (via the ordinal table) to a function RVA.
     for (uint32_t i = 0; i < exp.NumberOfNames; ++i) {
         uint32_t name_rva = 0;
-        if (!read_obj(read, base + exp.AddressOfNames + i * sizeof(uint32_t), name_rva)) {
+        if (!readMemory(cursor, moduleBaseAddress + exp.AddressOfNames + i * sizeof(uint32_t), &name_rva, sizeof(name_rva))) {
             break;
         }
         uint16_t ordinal = 0;
-        if (!read_obj(read, base + exp.AddressOfNameOrdinals + i * sizeof(uint16_t), ordinal)) {
+        if (!readMemory(cursor, moduleBaseAddress + exp.AddressOfNameOrdinals + i * sizeof(uint16_t), &ordinal, sizeof(ordinal))) {
             break;
         }
         if (ordinal >= exp.NumberOfFunctions) {
             continue;
         }
         uint32_t func_rva = 0;
-        if (!read_obj(read, base + exp.AddressOfFunctions + ordinal * sizeof(uint32_t), func_rva)) {
+        if (!readMemory(cursor, moduleBaseAddress + exp.AddressOfFunctions + ordinal * sizeof(uint32_t), &func_rva, sizeof(func_rva))) {
             continue;
         }
         if (func_rva == 0) {
@@ -143,18 +127,18 @@ bool parse_exports(const GuestReader& read, uint64_t base, const std::string& /*
         if (func_rva >= dir_begin && func_rva < dir_end) {
             continue;
         }
-        std::string name = read_cstr(read, base + name_rva);
+        std::string name = readCSTR(cursor, moduleBaseAddress + name_rva);
         if (name.empty()) {
             continue;
         }
-        out.emplace_back(base + func_rva, std::move(name));
+        out.emplace_back((uint64_t)(moduleBaseAddress + func_rva), std::move(name));
     }
     return true;
 }
 
-bool parse_imports(const GuestReader& read, uint64_t base, std::vector<ImportRecord>& out) {
+bool getModuleImports(TTD::Replay::UniqueCursor* cursor, TTD::GuestAddress moduleBaseAddress, std::vector<ImportRecord>& out) {
     IMAGE_NT_HEADERS64 nt{};
-    if (!read_nt_headers(read, base, nt)) {
+    if (!readNTHeaders(cursor, moduleBaseAddress, nt)) {
         return false;
     }
 
@@ -165,14 +149,13 @@ bool parse_imports(const GuestReader& read, uint64_t base, std::vector<ImportRec
 
     for (uint32_t idx = 0;; ++idx) {
         IMAGE_IMPORT_DESCRIPTOR desc{};
-        if (!read_obj(read, base + dir.VirtualAddress + idx * sizeof(IMAGE_IMPORT_DESCRIPTOR),
-                      desc)) {
+        if (!readMemory(cursor, moduleBaseAddress + dir.VirtualAddress + idx * sizeof(IMAGE_IMPORT_DESCRIPTOR), &desc, sizeof(desc))) {
             break;
         }
         if (desc.Name == 0 && desc.FirstThunk == 0) {
             break;  // null terminator
         }
-        std::string dll = read_cstr(read, base + desc.Name, 128);
+        std::string dll = readCSTR(cursor, moduleBaseAddress + desc.Name, 128);
 
         // OriginalFirstThunk (the import name table) survives binding; fall back to
         // FirstThunk if it is absent.
@@ -184,10 +167,10 @@ bool parse_imports(const GuestReader& read, uint64_t base, std::vector<ImportRec
 
         for (uint32_t t = 0;; ++t) {
             uint64_t thunk = 0;
-            if (!read_obj(read, base + int_rva + t * sizeof(uint64_t), thunk) || thunk == 0) {
+            if (!readMemory(cursor, moduleBaseAddress + int_rva + t * sizeof(uint64_t), &thunk, sizeof(thunk)) || thunk == 0) {
                 break;
             }
-            uint64_t slot_va = base + iat_rva + t * sizeof(uint64_t);
+            TTD::GuestAddress slot_va = moduleBaseAddress + iat_rva + t * sizeof(uint64_t);
             if (thunk & IMAGE_ORDINAL_FLAG64) {
                 // import by ordinal: no name to match against; record a synthetic name
                 ImportRecord rec;
@@ -197,7 +180,7 @@ bool parse_imports(const GuestReader& read, uint64_t base, std::vector<ImportRec
                 out.push_back(std::move(rec));
             } else {
                 // import by name: thunk -> IMAGE_IMPORT_BY_NAME { WORD Hint; CHAR Name[]; }
-                std::string name = read_cstr(read, base + (thunk & 0x7fffffff) + sizeof(uint16_t));
+                std::string name = readCSTR(cursor, moduleBaseAddress + (thunk & 0x7fffffff) + sizeof(uint16_t));
                 if (!name.empty()) {
                     ImportRecord rec;
                     rec.dll = dll;
@@ -211,53 +194,51 @@ bool parse_imports(const GuestReader& read, uint64_t base, std::vector<ImportRec
     return true;
 }
 
-bool parse_sections(const GuestReader& read, uint64_t base, std::vector<SectionRecord>& out) {
+bool getModuleSections(TTD::Replay::UniqueCursor* cursor, TTD::GuestAddress moduleBaseAddress, std::vector<SectionRecord>& out) {
     IMAGE_NT_HEADERS64 nt{};
-    if (!read_nt_headers(read, base, nt)) {
+    if (!readNTHeaders(cursor, moduleBaseAddress, nt)) {
         return false;
     }
 
     IMAGE_DOS_HEADER dos{};
-    if (!read_obj(read, base, dos)) {
+    if (!readMemory(cursor, moduleBaseAddress, &dos, sizeof(dos))) {
         return false;
     }
     // section headers follow the optional header
-    uint64_t sect_va = base + dos.e_lfanew + offsetof(IMAGE_NT_HEADERS64, OptionalHeader) +
-                       nt.FileHeader.SizeOfOptionalHeader;
+    TTD::GuestAddress sect_va = moduleBaseAddress + dos.e_lfanew + offsetof(IMAGE_NT_HEADERS64, OptionalHeader) + nt.FileHeader.SizeOfOptionalHeader;
 
     for (uint16_t i = 0; i < nt.FileHeader.NumberOfSections; ++i) {
         IMAGE_SECTION_HEADER sh{};
-        if (!read_obj(read, sect_va + i * sizeof(IMAGE_SECTION_HEADER), sh)) {
+        if (!readMemory(cursor, sect_va + i * sizeof(IMAGE_SECTION_HEADER), &sh, sizeof(sh))) {
             break;
         }
         char name[IMAGE_SIZEOF_SHORT_NAME + 1] = {0};
         std::memcpy(name, sh.Name, IMAGE_SIZEOF_SHORT_NAME);
         SectionRecord rec;
         rec.name = name;
-        rec.va = base + sh.VirtualAddress;
+        rec.va = moduleBaseAddress + sh.VirtualAddress;
         out.push_back(std::move(rec));
     }
     return true;
 }
 
-bool recover_strings(const GuestReader& read, uint64_t base, std::vector<std::string>& out,
-                     size_t min_len, size_t max_strings) {
+bool getModuleStrings(TTD::Replay::UniqueCursor* cursor, TTD::GuestAddress moduleBaseAddress, std::vector<std::string>& out, size_t minLength, size_t maxStrings) {
     IMAGE_NT_HEADERS64 nt{};
-    if (!read_nt_headers(read, base, nt)) {
+    if (!readNTHeaders(cursor, moduleBaseAddress, nt)) {
         return false;
     }
     IMAGE_DOS_HEADER dos{};
-    if (!read_obj(read, base, dos)) {
+    if (!readMemory(cursor, moduleBaseAddress, &dos, sizeof(dos))) {
         return false;
     }
-    uint64_t sect_va = base + dos.e_lfanew + offsetof(IMAGE_NT_HEADERS64, OptionalHeader) +
-                       nt.FileHeader.SizeOfOptionalHeader;
+    TTD::GuestAddress sect_va = moduleBaseAddress + dos.e_lfanew + offsetof(IMAGE_NT_HEADERS64, OptionalHeader) + nt.FileHeader.SizeOfOptionalHeader;
 
-    for (uint16_t i = 0; i < nt.FileHeader.NumberOfSections && out.size() < max_strings; ++i) {
+    for (uint16_t i = 0; i < nt.FileHeader.NumberOfSections && out.size() < maxStrings; ++i) {
         IMAGE_SECTION_HEADER sh{};
-        if (!read_obj(read, sect_va + i * sizeof(IMAGE_SECTION_HEADER), sh)) {
+        if (!readMemory(cursor, sect_va + i * sizeof(IMAGE_SECTION_HEADER), &sh, sizeof(sh))) {
             break;
         }
+
         // executable code sections are mostly noise for string recovery; skip them
         if (sh.Characteristics & IMAGE_SCN_MEM_EXECUTE) {
             continue;
@@ -268,7 +249,7 @@ bool recover_strings(const GuestReader& read, uint64_t base, std::vector<std::st
         }
 
         std::vector<uint8_t> buf(vsize);
-        size_t got = read(base + sh.VirtualAddress, buf.data(), buf.size());
+        size_t got = readMemory(cursor, moduleBaseAddress + sh.VirtualAddress, buf.data(), buf.size());
         if (got == 0) {
             continue;
         }
@@ -276,33 +257,33 @@ bool recover_strings(const GuestReader& read, uint64_t base, std::vector<std::st
 
         // ASCII runs
         std::string cur;
-        for (size_t p = 0; p < buf.size() && out.size() < max_strings; ++p) {
-            if (is_printable_ascii(buf[p])) {
+        for (size_t p = 0; p < buf.size() && out.size() < maxStrings; ++p) {
+            if (isPrintableASCII(buf[p])) {
                 cur.push_back(static_cast<char>(buf[p]));
             } else {
-                if (cur.size() >= min_len) {
+                if (cur.size() >= minLength) {
                     out.push_back(cur);
                 }
                 cur.clear();
             }
         }
-        if (cur.size() >= min_len && out.size() < max_strings) {
+        if (cur.size() >= minLength && out.size() < maxStrings) {
             out.push_back(cur);
         }
 
         // UTF-16LE runs (printable ASCII char followed by 0x00)
         cur.clear();
-        for (size_t p = 0; p + 1 < buf.size() && out.size() < max_strings; p += 2) {
-            if (buf[p + 1] == 0 && is_printable_ascii(buf[p])) {
+        for (size_t p = 0; p + 1 < buf.size() && out.size() < maxStrings; p += 2) {
+            if (buf[p + 1] == 0 && isPrintableASCII(buf[p])) {
                 cur.push_back(static_cast<char>(buf[p]));
             } else {
-                if (cur.size() >= min_len) {
+                if (cur.size() >= minLength) {
                     out.push_back(cur);
                 }
                 cur.clear();
             }
         }
-        if (cur.size() >= min_len && out.size() < max_strings) {
+        if (cur.size() >= minLength && out.size() < maxStrings) {
             out.push_back(cur);
         }
     }
