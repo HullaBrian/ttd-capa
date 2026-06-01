@@ -1,0 +1,3 @@
+[submodule "capa"]
+	path = capa
+	url = https://github.com/HullaBrian/capa
