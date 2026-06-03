@@ -3,6 +3,15 @@
 ttd-capa is a [CAPA](https://github.com/mandiant/capa) compatible capability extractor built for Time Travel Debugging (TTD) traces.
 TTD records the complete execution of a process, and exposes a vast amount of information which can be used for analysis purposes.
 
+![](assets/ttd-capa-comparison.png)
+
+With this tool, reverse engineers can get signifcantly more information from a binary with just a TTD trace, a tool, and a dream. 
+Take a packed CobaltStrike beacon as an example (see above screenshot). With just a static CAPA scan, only a few things might be observed (left side of screenshot).
+If you're lucky, you may even see the type of packer being used (i.e. UPX). However, not much can be determined about the actual capabilities 
+of the packed executable code. This is where ttd-capa shines. Once a TTD trace is recorded, ttd-capa can scan the entire trace and identify 
+capabilities only revealed during runtime (right side of screenshot).
+
+![](assets/ttd-capa-diagram.png)
 ttd-capa is not a standalone tool. Rather, it is meant to be run in unison with the CAPA tool so as to extract information useful for CAPA rule matching.
 The general capability extraction process looks like:
 1. Get a TTD trace of a given sample
