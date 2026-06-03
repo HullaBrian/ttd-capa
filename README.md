@@ -106,6 +106,7 @@ TTD POS       TID  CAPABILITY                              NAMESPACE            
 ...
 38DF:F52        4  create HTTP request                     communication/http/client           wininet.InternetOpenA('Mozilla/4.0 (compatible; MSIE 5.0; Windows NT; DigExt; DTS Agent', 0x0, 0x0, 0x0, 0x0, 0x19b5040, 0xcdbc90, '/jquery-3.3.1.min.js') -> 0xcc0004
 38E5:6DA        4  connect to HTTP server                  communication/http/client           wininet.InternetConnectA(0xcc0004, '192.168.81.129', 0x50, 0x0, 0x0, 0x3, 0x0, 0x11584c4) -> 0xcc0008
+...
 ```
 
 `ttd-timeline.py` allows you to either display execution capabilities or all observed API calls within the trace in the final timeline view.
