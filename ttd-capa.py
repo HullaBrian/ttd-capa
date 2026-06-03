@@ -1,3 +1,16 @@
+#!/usr/bin/env python3
+# Copyright 2024 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+
 """
 One-command CAPA-over-TTD wrapper.
 
@@ -33,7 +46,10 @@ def find_extractor(explicit: str | None) -> Path:
     # search common build output locations relative to this script
     candidates = [
         HERE / "ttdcapa-extract.exe",
+        HERE / "build" / "ttdcapa-extract.exe",
         HERE / "ttd" / "bin" / "x64" / "Release" / "ttdcapa-extract.exe",
+        HERE / "ttd" / "bin" / "x64" / "Debug" / "ttdcapa-extract.exe",
+        HERE / "ttd" / "ttdcapa-extract.exe",
     ]
     for c in candidates:
         if c.is_file():
@@ -108,7 +124,8 @@ def main(argv: list[str]) -> int:
             str(json_path),
         ]
         print(f"[ttd-capa] running capa: {' '.join(capa_cmd)}", file=sys.stderr)
-        return subprocess.call(capa_cmd)
+
+        return subprocess.call(capa_cmd, cwd=str(json_path.parent))
     finally:
         if args.keep_json:
             print(f"[ttd-capa] kept TTD report: {json_path}", file=sys.stderr)

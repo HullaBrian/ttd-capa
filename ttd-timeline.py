@@ -1,3 +1,16 @@
+#!/usr/bin/env python3
+# Copyright 2024 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+
 """
 Print a chronological "timeline" of what the TTD extractor uncovered, ordered by
 TTD trace position so you can step through it in WinDbg.
@@ -18,8 +31,7 @@ Two modes:
 The TTD position is exactly what WinDbg shows: paste "Sequence:Steps" into the
 time-travel position box, or use `!tt <Sequence>:<Steps>`, to jump to the event.
 
-Run from anywhere; the bundled capa-9.4.0 tree is added to sys.path automatically.
-Requires capa's dependencies to be importable (use the capa-9.4.0 venv).
+Requires the capa fork to be installed in the active virtual environment.
 """
 import sys
 import json
@@ -28,8 +40,6 @@ from pathlib import Path
 from typing import Optional
 
 HERE = Path(__file__).resolve().parent
-# make the bundled capa importable regardless of the current working directory
-sys.path.insert(0, str(HERE / "capa"))
 
 from capa.features.address import ProcessAddress, ThreadAddress, DynamicCallAddress  # noqa: E402
 from capa.features.extractors.ttd.models import TtdCall  # noqa: E402
