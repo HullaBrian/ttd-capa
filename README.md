@@ -72,14 +72,14 @@ The wrapper runs the extractor to a temp report (deleted after use), then invoke
 after a bare `--` is forwarded to CAPA:
 
 ```powershell
-python ttd-capa.py <trace.run> <rules-dir>  --sample sample.exe -- -vv
+python ttd-capa.py <trace.run> <rules-dir> --sample sample.exe -- -vv
 ```
 
 Useful flags:
-- `--extractor <path>` - specify a path to the ttd-capa executable
-- `--max-calls N` - cap huge traces
-- `--with-stack-args` - also capture stack args 5+
-- `--keep-json` - keep the report
+- `--extractor <path>` - specify a path to the ttd-capa extractor executable
+- `--max-calls N` - cap huge traces to certain number of calls
+- `--with-stack-args` - captures parameters for function calls that are on the stack (capture more than 5+ parameters for function calls)
+- `--keep-json` - keep the generated JSON report after the Python script runs
 
 ## Manual
 To manually extract capability features without the Python wrapper script:
