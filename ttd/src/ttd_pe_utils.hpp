@@ -11,8 +11,7 @@
 #include <TTD/IReplayEngineStl.h>
 
 namespace ttdcapa {
-	// Read `size` bytes of guest virtual memory at `addr` into `dst`.
-	// Returns the number of bytes actually available/read (may be < size).
+	// Read `size` bytes of guest virtual memory at `addr` into `dst`. Returns the number of bytes actually available/read (may be < size).
 	using GuestReader = std::function<size_t(TTD::GuestAddress addr, void* dst, size_t size)>;
 
 	// Parse the export directory of the PE image mapped at `base`. Appends one entry

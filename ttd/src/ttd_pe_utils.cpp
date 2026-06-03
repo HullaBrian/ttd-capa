@@ -107,30 +107,37 @@ bool getModuleExports(TTD::Replay::UniqueCursor* cursor, TTD::GuestAddress modul
         if (!readMemory(cursor, moduleBaseAddress + exp.AddressOfNames + i * sizeof(uint32_t), &name_rva, sizeof(name_rva))) {
             break;
         }
+
         uint16_t ordinal = 0;
         if (!readMemory(cursor, moduleBaseAddress + exp.AddressOfNameOrdinals + i * sizeof(uint16_t), &ordinal, sizeof(ordinal))) {
             break;
         }
+
         if (ordinal >= exp.NumberOfFunctions) {
             continue;
         }
+
         uint32_t func_rva = 0;
         if (!readMemory(cursor, moduleBaseAddress + exp.AddressOfFunctions + ordinal * sizeof(uint32_t), &func_rva, sizeof(func_rva))) {
             continue;
         }
+
         if (func_rva == 0) {
             continue;
         }
-        // A function RVA pointing back into the export directory is a forwarder
-        // ("OTHERDLL.Func") rather than real code; calls land on the forwarded
-        // target, so these never match a CALL site. Skip them.
+
+        // Skip forwarded exports
         if (func_rva >= dir_begin && func_rva < dir_end) {
             continue;
         }
+
         std::string name = readCSTR(cursor, moduleBaseAddress + name_rva);
+
+        // Skip empty export names (possibly due to error in parsing name)
         if (name.empty()) {
             continue;
         }
+
         out.emplace_back((uint64_t)(moduleBaseAddress + func_rva), std::move(name));
     }
     return true;
@@ -138,6 +145,7 @@ bool getModuleExports(TTD::Replay::UniqueCursor* cursor, TTD::GuestAddress modul
 
 bool getModuleImports(TTD::Replay::UniqueCursor* cursor, TTD::GuestAddress moduleBaseAddress, std::vector<ImportRecord>& out) {
     IMAGE_NT_HEADERS64 nt{};
+
     if (!readNTHeaders(cursor, moduleBaseAddress, nt)) {
         return false;
     }
@@ -149,12 +157,15 @@ bool getModuleImports(TTD::Replay::UniqueCursor* cursor, TTD::GuestAddress modul
 
     for (uint32_t idx = 0;; ++idx) {
         IMAGE_IMPORT_DESCRIPTOR desc{};
+
         if (!readMemory(cursor, moduleBaseAddress + dir.VirtualAddress + idx * sizeof(IMAGE_IMPORT_DESCRIPTOR), &desc, sizeof(desc))) {
             break;
         }
+
         if (desc.Name == 0 && desc.FirstThunk == 0) {
             break;  // null terminator
         }
+
         std::string dll = readCSTR(cursor, moduleBaseAddress + desc.Name, 128);
 
         // OriginalFirstThunk (the import name table) survives binding; fall back to
@@ -170,7 +181,9 @@ bool getModuleImports(TTD::Replay::UniqueCursor* cursor, TTD::GuestAddress modul
             if (!readMemory(cursor, moduleBaseAddress + int_rva + t * sizeof(uint64_t), &thunk, sizeof(thunk)) || thunk == 0) {
                 break;
             }
+
             TTD::GuestAddress slot_va = moduleBaseAddress + iat_rva + t * sizeof(uint64_t);
+
             if (thunk & IMAGE_ORDINAL_FLAG64) {
                 // import by ordinal: no name to match against; record a synthetic name
                 ImportRecord rec;
@@ -196,6 +209,7 @@ bool getModuleImports(TTD::Replay::UniqueCursor* cursor, TTD::GuestAddress modul
 
 bool getModuleSections(TTD::Replay::UniqueCursor* cursor, TTD::GuestAddress moduleBaseAddress, std::vector<SectionRecord>& out) {
     IMAGE_NT_HEADERS64 nt{};
+
     if (!readNTHeaders(cursor, moduleBaseAddress, nt)) {
         return false;
     }
@@ -209,9 +223,11 @@ bool getModuleSections(TTD::Replay::UniqueCursor* cursor, TTD::GuestAddress modu
 
     for (uint16_t i = 0; i < nt.FileHeader.NumberOfSections; ++i) {
         IMAGE_SECTION_HEADER sh{};
+
         if (!readMemory(cursor, sect_va + i * sizeof(IMAGE_SECTION_HEADER), &sh, sizeof(sh))) {
             break;
         }
+
         char name[IMAGE_SIZEOF_SHORT_NAME + 1] = {0};
         std::memcpy(name, sh.Name, IMAGE_SIZEOF_SHORT_NAME);
         SectionRecord rec;
@@ -224,13 +240,16 @@ bool getModuleSections(TTD::Replay::UniqueCursor* cursor, TTD::GuestAddress modu
 
 bool getModuleStrings(TTD::Replay::UniqueCursor* cursor, TTD::GuestAddress moduleBaseAddress, std::vector<std::string>& out, size_t minLength, size_t maxStrings) {
     IMAGE_NT_HEADERS64 nt{};
+
     if (!readNTHeaders(cursor, moduleBaseAddress, nt)) {
         return false;
     }
+
     IMAGE_DOS_HEADER dos{};
     if (!readMemory(cursor, moduleBaseAddress, &dos, sizeof(dos))) {
         return false;
     }
+
     TTD::GuestAddress sect_va = moduleBaseAddress + dos.e_lfanew + offsetof(IMAGE_NT_HEADERS64, OptionalHeader) + nt.FileHeader.SizeOfOptionalHeader;
 
     for (uint16_t i = 0; i < nt.FileHeader.NumberOfSections && out.size() < maxStrings; ++i) {
@@ -243,6 +262,7 @@ bool getModuleStrings(TTD::Replay::UniqueCursor* cursor, TTD::GuestAddress modul
         if (sh.Characteristics & IMAGE_SCN_MEM_EXECUTE) {
             continue;
         }
+
         uint32_t vsize = sh.Misc.VirtualSize ? sh.Misc.VirtualSize : sh.SizeOfRawData;
         if (vsize == 0 || vsize > 64 * 1024 * 1024) {
             continue;
@@ -253,6 +273,7 @@ bool getModuleStrings(TTD::Replay::UniqueCursor* cursor, TTD::GuestAddress modul
         if (got == 0) {
             continue;
         }
+
         buf.resize(got);
 
         // ASCII runs
@@ -267,6 +288,7 @@ bool getModuleStrings(TTD::Replay::UniqueCursor* cursor, TTD::GuestAddress modul
                 cur.clear();
             }
         }
+
         if (cur.size() >= minLength && out.size() < maxStrings) {
             out.push_back(cur);
         }
@@ -283,6 +305,7 @@ bool getModuleStrings(TTD::Replay::UniqueCursor* cursor, TTD::GuestAddress modul
                 cur.clear();
             }
         }
+
         if (cur.size() >= minLength && out.size() < maxStrings) {
             out.push_back(cur);
         }

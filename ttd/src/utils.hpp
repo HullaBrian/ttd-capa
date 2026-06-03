@@ -32,13 +32,12 @@ namespace ttdcapa {
     struct Options {
         std::filesystem::path trace;
         std::filesystem::path sample;  // optional on-disk sample for hashing
-        std::filesystem::path output;  // empty => stdout
-        uint64_t max_calls = 0;        // 0 => unlimited
+        std::filesystem::path output;  // empty will output to stdout
+        uint64_t max_calls = 0;        // 0 means unlimited
         bool with_stack_args = false;
     };
     
-    // Compute MD5/SHA1/SHA256 (lowercase hex) of a file's contents via Windows CNG.
-    // Returns empty strings on failure (e.g. file missing).
+    // Compute MD5/SHA1/SHA256 (lowercase hex) of a file's contents via Windows CNG. Returns empty strings on failure (e.g. file missing).
     SampleHashes hashFile(const std::filesystem::path& path);
 
     // Writes generated CAPA JSON report to specified location

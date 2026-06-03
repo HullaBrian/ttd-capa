@@ -66,7 +66,7 @@ namespace ttdcapa {
     // A loaded module's address range plus the export name for each exported address,
     // used to resolve a CALL target to module.api.
     struct ModuleExports {
-        std::string name;                                       // module name without extension, e.g. "kernel32"
+        std::string name;                                       // module name without extension, something like "kernel32"
         TTD::GuestAddress base;
         uint64_t size = 0;
         std::vector<std::pair<uint64_t, std::string>> exports;  // exported function VA -> export name

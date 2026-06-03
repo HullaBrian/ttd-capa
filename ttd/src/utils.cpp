@@ -21,10 +21,12 @@ namespace ttdcapa {
             static const char* digits = "0123456789abcdef";
             std::string out;
             out.reserve(bytes.size() * 2);
+
             for (uint8_t b : bytes) {
                 out.push_back(digits[b >> 4]);
                 out.push_back(digits[b & 0x0f]);
             }
+
             return out;
         }
 
@@ -36,8 +38,7 @@ namespace ttdcapa {
             }
 
             DWORD hash_len = 0, cb = 0;
-            ::BCryptGetProperty(hAlg, BCRYPT_HASH_LENGTH, reinterpret_cast<PUCHAR>(&hash_len),
-                sizeof(hash_len), &cb, 0);
+            ::BCryptGetProperty(hAlg, BCRYPT_HASH_LENGTH, reinterpret_cast<PUCHAR>(&hash_len), sizeof(hash_len), &cb, 0);
 
             BCRYPT_HASH_HANDLE hHash = nullptr;
             std::string result;
@@ -59,14 +60,12 @@ namespace ttdcapa {
             if (ws.empty()) {
                 return {};
             }
-            int needed = ::WideCharToMultiByte(CP_UTF8, 0, ws.data(), static_cast<int>(ws.size()),
-                nullptr, 0, nullptr, nullptr);
+            int needed = ::WideCharToMultiByte(CP_UTF8, 0, ws.data(), static_cast<int>(ws.size()), nullptr, 0, nullptr, nullptr);
             if (needed <= 0) {
                 return {};
             }
             std::string out(static_cast<size_t>(needed), '\0');
-            ::WideCharToMultiByte(CP_UTF8, 0, ws.data(), static_cast<int>(ws.size()), out.data(), needed,
-                nullptr, nullptr);
+            ::WideCharToMultiByte(CP_UTF8, 0, ws.data(), static_cast<int>(ws.size()), out.data(), needed, nullptr, nullptr);
             return out;
         }
     }  // namespace
@@ -78,8 +77,7 @@ namespace ttdcapa {
         if (!f) {
             return out;
         }
-        std::vector<uint8_t> data((std::istreambuf_iterator<char>(f)),
-            std::istreambuf_iterator<char>());
+        std::vector<uint8_t> data((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
 
         out.md5 = hashBuffer(BCRYPT_MD5_ALGORITHM, data);
         out.sha1 = hashBuffer(BCRYPT_SHA1_ALGORITHM, data);
@@ -90,7 +88,7 @@ namespace ttdcapa {
     void initializeReport(TTD::Replay::UniqueReplayEngine& engine, TTD::Replay::UniqueCursor& cursor, std::wstring samplePath) {
         g_report.arch = "x64";
         g_report.os_name = "windows";
-        g_report.process.ppid = 0;  // not exposed by TTD
+        g_report.process.ppid = 0;  // not exposed by TTD :(
         
         size_t mod_count = engine->GetModuleCount();
         TTD::Replay::Module const* mods = engine->GetModuleList();
@@ -104,7 +102,7 @@ namespace ttdcapa {
             std::wstring name = mods[i].pName ? mods[i].pName : L"";
             if (name.size() >= 4) {
                 std::wstring ext = name.substr(name.size() - 4);
-                for (auto& c : ext) c = static_cast<wchar_t>(towlower(c));
+                for (auto& c : ext) c = static_cast<wchar_t>(towlower(c));  // Lowercase name
                 if (ext == L".exe") {
                     mainIndex = static_cast<int>(i);
                     break;
@@ -143,9 +141,11 @@ namespace ttdcapa {
 
             return ok && !g_report.sections.empty();
         };
+
         if (!try_parse(engine->GetLastPosition())) {
             try_parse(TTD::Replay::Position::Min);
         }
+
         cursor->SetPosition(engine->GetLastPosition());
         getModuleStrings(&cursor, mbase, g_report.strings);
 

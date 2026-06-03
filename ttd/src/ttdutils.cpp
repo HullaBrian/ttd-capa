@@ -83,6 +83,7 @@ namespace ttdcapa {
         if (addr < 0x10000) {
             return std::nullopt;  // null / low addresses are never string pointers
         }
+
         constexpr size_t kMax = 512;
         char buf[kMax];
         auto result = thread->QueryMemoryBuffer(TTD::GuestAddress{ addr }, TTD::BufferView{ buf, kMax });
@@ -137,8 +138,7 @@ namespace ttdcapa {
         return std::nullopt;
     }
 
-    // Capture one candidate argument: a dereferenced string if it points to one,
-    // otherwise the raw integer value.
+    // Capture one candidate argument: a dereferenced string if it points to one, otherwise the raw integer value.
     ttdcapa::ArgValue captureCallArg(TTD::Replay::IThreadView const* thread, uint64_t value) {
         if (auto s = tryReadString(thread, value)) {
             return *s;

@@ -94,8 +94,8 @@ int wmain(int argc, wchar_t** argv) {
 
             if (is_call) {
                 auto it = resolvedTraceModuleExports.find(static_cast<uint64_t>(target));
-                if (it == resolvedTraceModuleExports.end()) {
-                    return;  // not an exported API entry; skip intra-module noise
+                if (it == resolvedTraceModuleExports.end()) {  // skip unresolved API function calls
+                    return;
                 }
                 if (opt.max_calls != 0 && g_report.process.calls.size() >= opt.max_calls) {
                     limit_hit = true;
@@ -108,9 +108,7 @@ int wmain(int argc, wchar_t** argv) {
                 rec.module = it->second.first;
                 rec.api = it->second.second;
 
-                // The navigable TTD position of this CALL, as WinDbg shows it:
-                // "Sequence:Steps" in hex. Paste it into WinDbg's time-travel position
-                // box (or `!tt Sequence:Steps`) to jump straight to this instruction.
+                // Retrieve usable TTD timestamp
                 TTD::Replay::Position pos = thread->GetPosition();
                 char posbuf[40];
                 std::snprintf(
@@ -121,8 +119,6 @@ int wmain(int argc, wchar_t** argv) {
                 );
                 rec.position = posbuf;
 
-                // GetCrossPlatformContext returns by value; bind to a local before
-                // taking its address (the result is a temporary, not an l-value).
                 TTD::Replay::RegisterContext regs = thread->GetCrossPlatformContext();
                 auto const* ctx = reinterpret_cast<AMD64_CONTEXT const*>(&regs);
                 rec.args.push_back(captureCallArg(thread, ctx->Rcx));
@@ -130,10 +126,7 @@ int wmain(int argc, wchar_t** argv) {
                 rec.args.push_back(captureCallArg(thread, ctx->R8));
                 rec.args.push_back(captureCallArg(thread, ctx->R9));
 
-                if (opt.with_stack_args) {
-                    // Stack args 5+ live above the shadow space. At the CALL instruction
-                    // the return address has not been pushed yet, so the first stack arg
-                    // slot is [RSP + 0x28]. Heuristic; over-capture is acceptable.
+                if (opt.with_stack_args) {  // Capture arguments on stack based on offsets from RSP
                     for (int k = 0; k < 4; ++k) {
                         uint64_t slot = ctx->Rsp + 0x28 + static_cast<uint64_t>(k) * 8;
                         uint64_t v = 0;
@@ -147,10 +140,8 @@ int wmain(int argc, wchar_t** argv) {
                 size_t idx = g_report.process.calls.size();
                 in_flight[utid].push_back({ static_cast<uint64_t>(fall_through), idx });
                 g_report.process.calls.push_back(std::move(rec));
-            }
-            else {
-                // RET: pair with the most recent recorded call on this thread whose
-                // expected return address matches where we are returning to.
+            } else {
+                // Log most recent function called as returned and capture return value
                 auto it = in_flight.find(utid);
                 if (it != in_flight.end() && !it->second.empty()) {
                     auto& top = it->second.back();
