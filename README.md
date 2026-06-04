@@ -136,8 +136,7 @@ python ttd-timeline.py <JSON REPORT PATH> --calls
 - Only the functions directly exported by loaded modules are logged in the JSON report
 
 # Verifying the backend in isolation
-`tests/test_ttd_extractor.py` loads a report and dumps every feature per scope — handy to confirm a call yields 
-the expected `API`/`Number`/`String` features:
+`tests/test_ttd_extractor.py` loads a report and dumps every feature per scope - helpful to confirm expected `API`/`Number`/`String` features:
 
 ```powershell
 python tests\test_ttd_extractor.py [report.ttd.json]
