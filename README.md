@@ -35,7 +35,7 @@ which has the potential to significantly increase quick wins during malware anal
 - Visual Studio
 - Python 3.10+ for CAPA
 - A TTD `.run` trace (plus its `.idx`; the extractor builds the `.idx` on first run
-  if missing). Record one with WinDbg Preview's Time-travel debugging or `tttracer.exe`.
+  if missing). Record one with WinDbg or the CLI tool `ttd.exe`.
 - x64 traces only in this version.
   
 # Building ttd-capa
