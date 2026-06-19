@@ -32,8 +32,9 @@ which has the potential to significantly increase quick wins during malware anal
 
 # Prerequisites
 - Windows
-- Visual Studio
-- Python 3.10+ for CAPA
+- v145 for Microsoft C++ Build Tools
+- TTD DLLs (`TTDReplay.dll`, and `TTDReplayCPU.dll`)
+- Python 3.10+ (for CAPA)
 
 # Building ttd-capa
 1. Open `ttd/ttdcapa-extract.sln` in Visual Studio
