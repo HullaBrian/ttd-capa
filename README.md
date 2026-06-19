@@ -1,3 +1,6 @@
+> [!WARNING]  
+> ttd-capa is still very early-on in development. As such, you may encounter unexpected issues and/or spaghetti code in this project. In no way is this professionally written software.
+
 # Overview
 
 ttd-capa is a [CAPA](https://github.com/mandiant/capa) compatible capability extractor built for Time Travel Debugging (TTD) traces.
@@ -7,7 +10,7 @@ TTD records the complete execution of a process, and exposes a vast amount of in
 
 With this tool, reverse engineers can get signifcantly more information from a binary with just a TTD trace, a tool, and a dream. 
 Take a packed CobaltStrike beacon as an example (see above screenshot). With just a static CAPA scan, only a few things might be observed (left side of screenshot).
-If you're lucky, you may even see the type of packer being used (i.e. UPX). However, not much can be determined about the actual capabilities 
+You may even see the type of packer being used (i.e. UPX). However, not much can be determined about the actual capabilities 
 of the packed executable code. This is where ttd-capa shines. Once a TTD trace is recorded, ttd-capa can scan the entire trace and identify 
 capabilities only revealed during runtime (right side of screenshot).
 
@@ -17,9 +20,6 @@ The general capability extraction process looks like:
 1. Get a TTD trace of a given sample
 2. Run ttd-capa on the trace, which generates a CAPA-compatible JSON report
 3. Run CAPA on the JSON report, which uses existing CAPA rules to extract capability information
-
-As a disclaimer, I am not a professional software developer. As such, you may encounter unexpected issues and/or spaghetti code in this project. If you'd
-like to contribute, I'm more than happy to take a look at PRs, but please include readable and descriptive code/comments.
 
 # How it Works
 ttd-capa uses the official Microsoft TTD C++ SDK to interact with TTD, and [nlohmann/json](https://github.com/nlohmann/json) for working with JSON.
