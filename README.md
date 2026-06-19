@@ -1,5 +1,5 @@
 > [!WARNING]  
-> ttd-capa is still very early-on in development. As such, you may encounter unexpected issues and/or spaghetti code in this project. In no way is this professionally written software.
+> ttd-capa is still very early-on in development. As such, you may encounter unexpected issues and/or spaghetti code in this project. In no way is this professionally written software. If you have an issue or a suggestion, feel free to open an issue or PR
 
 # Overview
 
