@@ -58,11 +58,10 @@ int wmain(int argc, wchar_t** argv) {
     TTD::SystemInfo const& sys = engine->GetSystemInfo();
     uint16_t pa = static_cast<uint16_t>(sys.System.ProcessorArchitecture);
     if (pa != PROCESSOR_ARCHITECTURE_AMD64) {
-        std::cerr << "Only x64 traces are supported in this version (arch=" << static_cast<int>(pa) << ").\n";
+        std::cerr << "[-] Only x64 traces are supported in this version (arch=" << static_cast<int>(pa) << ").\n";
         return 2;
     }
     g_report.process.pid = static_cast<uint64_t>(sys.ProcessId);
-    
     
     TTD::Replay::UniqueCursor inspection_cursor{ engine->NewCursor() };
 
@@ -155,7 +154,7 @@ int wmain(int argc, wchar_t** argv) {
         };
 
     sweep->SetCallReturnCallback(on_call_return);
-    sweep->SetReplayFlags(TTD::Replay::ReplayFlags::ReplayAllSegmentsWithoutFiltering | TTD::Replay::ReplayFlags::ReplaySegmentsSequentially);
+    sweep->SetReplayFlags(TTD::Replay::ReplayFlags::ReplaySegmentsSequentially);
     sweep->SetPosition(TTD::Replay::Position::Min);
     std::cerr << "[+] Beginning execution sweep...\n";
     sweep->ReplayForward();
