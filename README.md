@@ -33,14 +33,14 @@ which has the potential to significantly increase quick wins during malware anal
 # Prerequisites
 - Windows
 - v145 for Microsoft C++ Build Tools
-- TTD DLLs (`TTDReplay.dll`, and `TTDReplayCPU.dll`)
+- TTD DLLs (`TTDReplay.dll` and `TTDReplayCPU.dll`)
 - Python 3.10+ (for CAPA)
 
 # Building ttd-capa
 1. Open `ttd/ttdcapa-extract.sln` in Visual Studio
 2. Ensure that the required nuget packages (`Microsoft.TimeTravelDebugging.Apis` and `nlohmann.json`) are installed
 3. Set the build mode to `x64` and `Release`
-4. Navigate to `Build > Build Solution` to being the build
+4. Navigate to `Build > Build Solution` in order to begin the build
 
 After the build, ttd-capa cannot run properly without Microsoft's `TTDReplay.dll` and `TTDReplayCPU.dll` being in the same directory as `ttdcapa-extract.exe`. 
 To get those DLLs, ensure you have WinDbg instealled already. Then, run the following PowerShell command to find the DLL location on your system:
