@@ -17,9 +17,9 @@ capabilities only revealed during runtime (right side of screenshot).
 ![](assets/ttd-capa-diagram.png)
 ttd-capa is not a standalone tool. Rather, it is meant to be run in unison with the CAPA tool so as to extract information useful for CAPA rule matching.
 The general capability extraction process looks like:
-1. Get a TTD trace of a given sample
+1. Record a TTD trace of a given sample
 2. Run ttd-capa on the trace, which generates a CAPA-compatible JSON report
-3. Run CAPA on the JSON report, which uses existing CAPA rules to extract capability information
+3. Run CAPA on the report, which uses existing CAPA rules to extract capability information
 
 # How it Works
 ttd-capa uses the official Microsoft TTD C++ SDK to interact with TTD, and [nlohmann/json](https://github.com/nlohmann/json) for working with JSON.
@@ -31,13 +31,10 @@ with the associate module, function name, parameters, and return value. Addition
 which has the potential to significantly increase quick wins during malware analysis.
 
 # Prerequisites
-- Windows x64 (the extractor links the TTD Replay runtime)
+- Windows
 - Visual Studio
 - Python 3.10+ for CAPA
-- A TTD `.run` trace (plus its `.idx`; the extractor builds the `.idx` on first run
-  if missing). Record one with WinDbg or the CLI tool `ttd.exe`.
-- x64 traces only in this version.
-  
+
 # Building ttd-capa
 1. Open `ttd/ttdcapa-extract.sln` in Visual Studio
 2. Ensure that the required nuget packages (`Microsoft.TimeTravelDebugging.Apis` and `nlohmann.json`) are installed
