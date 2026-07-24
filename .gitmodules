@@ -1,3 +1,6 @@
 [submodule "capa"]
 	path = capa
 	url = https://github.com/HullaBrian/capa
+[submodule "win32json"]
+	path = win32json
+	url = https://github.com/marlersoft/win32json

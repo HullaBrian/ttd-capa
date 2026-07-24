@@ -30,6 +30,42 @@ the entire trace. Every time a call occurs, ttd-capa checks if the call target i
 with the associate module, function name, parameters, and return value. Additionally, ttd-capa automatically attempts to resolve function parameters as strings, 
 which has the potential to significantly increase quick wins during malware analysis.
 
+## Metadata-driven parameter decoding
+Knowing an API's name is not the same as knowing its signature. Without one, all an extractor can do is grab the four
+x64 argument registers and guess at each value - so `CloseHandle(hObject)` gets recorded with four arguments, three of
+which are whatever the caller happened to leave in RDX/R8/R9, and any integer that happens to point at printable bytes
+gets mistaken for a string.
+
+ttd-capa fixes that with Microsoft's own Win32 API metadata, vendored as the [win32json](https://github.com/marlersoft/win32json)
+submodule. `tools/build-win32-index.py` flattens those ~300 JSON files into a compact binary index
+(`ttd/data/win32-index.bin`, ~2.7 MB) keyed by export name, which the extractor memory-maps at startup. For every call
+whose export is in the index, ttd-capa now knows:
+
+- **the real parameter count**, so exactly that many arguments are captured - including the ones past RCX/RDX/R8/R9
+  (`CreateProcessW` has ten) and none of the register residue that used to masquerade as arguments
+- **each parameter's type**, so `PSTR` is decoded as ANSI and `PWSTR` as UTF-16 rather than by trial, and values typed
+  as `HANDLE`, enums, or plain integers are never dereferenced at all
+- **direction** - `[Out]` parameters are re-read at the call's *return* position, so `lpNumberOfBytesRead` and friends
+  are rendered filled in. This is something a live debugger can't easily do, and it's where a time-travel trace earns
+  its keep
+- **buffer lengths**, from `MemorySize(BytesParamIndex)` and array count parameters, so `InternetReadFile`'s `lpBuffer`
+  can be captured at its true length once the callee has written it
+- **enum and flag tables**, so `dwCreationDisposition=3` renders as `CREATE_ALWAYS`
+
+The decoded view lands in a new `params` array on each call in the report. The `args` array capa matches against keeps
+its original shape - it just has the correct arity now, plus any strings recovered from `[Out]` parameters. Symbolic
+flag names are deliberately *not* pushed into `args`, since existing rules match flags numerically.
+
+Coverage is the public Windows SDK, which is what the metadata documents: roughly the top 15% of calls in a typical
+trace by volume, but the great majority of the *interesting* ones. Calls with no signature - `ntdll` internals, CRT
+helpers like `memset` - fall back to the original four-register heuristic unchanged.
+
+To regenerate the index (only needed after bumping the `win32json` submodule):
+
+```powershell
+python tools\build-win32-index.py
+```
+
 # Prerequisites
 - Windows
 - v145 for Microsoft C++ Build Tools
@@ -37,10 +73,17 @@ which has the potential to significantly increase quick wins during malware anal
 - Python 3.10+ (for CAPA)
 
 # Building ttd-capa
+Clone with submodules (`git clone --recursive`, or `git submodule update --init` in an existing clone) - the
+`win32json` submodule supplies the API metadata.
+
 1. Open `ttd/ttdcapa-extract.sln` in Visual Studio
 2. Ensure that the required nuget packages (`Microsoft.TimeTravelDebugging.Apis` and `nlohmann.json`) are installed
 3. Set the build mode to `x64` and `Release`
 4. Navigate to `Build > Build Solution` in order to begin the build
+
+The build copies `ttd/data/win32-index.bin` next to the executable. If it's missing, run
+`python tools\build-win32-index.py` to generate it; without it the extractor still runs, but falls back to heuristic
+argument capture for every call.
 
 After the build, ttd-capa cannot run properly without Microsoft's `TTDReplay.dll` and `TTDReplayCPU.dll` being in the same directory as `ttdcapa-extract.exe`. 
 To get those DLLs, ensure you have WinDbg instealled already. Then, run the following PowerShell command to find the DLL location on your system:
@@ -85,7 +128,12 @@ python ttd-capa.py <trace.run> <rules-dir> --sample sample.exe -- -vv
 Useful flags:
 - `--extractor <path>` - specify a path to the ttd-capa extractor executable
 - `--max-calls N` - cap huge traces to certain number of calls
-- `--with-stack-args` - captures parameters for function calls that are on the stack (capture more than 5+ parameters for function calls)
+- `--with-stack-args` - for calls with *no* Win32 metadata, also grab four stack slots past the register arguments.
+  Calls we have a signature for always capture their true arity, stack parameters included, so this only affects the
+  heuristic fallback path
+- `--win32-index <path>` - use a specific `win32-index.bin` instead of the one next to the extractor
+- `--no-metadata` - disable metadata-driven decoding and use the original four-register heuristic everywhere
+- `--max-buffer N` - bytes to keep from any one captured buffer (default 256)
 - `--keep-json` - keep the generated JSON report after the Python script runs
 
 ## Manual
@@ -129,8 +177,14 @@ python ttd-timeline.py <JSON REPORT PATH> --calls
 
 # Limitations
 - Only x64 traces are supported at the moment (no x86 or ARM)
-- Argument captures are heuristic, so errors may occur
 - Only the functions directly exported by loaded modules are logged in the JSON report
+- Argument decoding is exact only for APIs covered by the Win32 metadata (public SDK surface). `ntdll` internals,
+  undocumented APIs, and CRT helpers fall back to the four-register heuristic, so their arguments may still be wrong
+- COM interface methods are not resolved; the metadata has no vtable indices, and the call target is a vtable slot
+  rather than a named export
+- Variadic functions (`printf`-style) have no statically knowable argument count, so only their fixed parameters are
+  decoded
+- Structure parameters are recorded as pointers; fields are not expanded
 
 # Verifying the backend in isolation
 `tests/test_ttd_extractor.py` loads a report and dumps every feature per scope - helpful to confirm expected `API`/`Number`/`String` features:

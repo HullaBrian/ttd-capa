@@ -70,15 +70,19 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClCompile Include="src\abi_x64.cpp" />
     <ClCompile Include="src\main.cpp" />
     <ClCompile Include="src\ttd_pe_utils.cpp" />
     <ClCompile Include="src\ttdutils.cpp" />
     <ClCompile Include="src\utils.cpp" />
+    <ClCompile Include="src\win32meta.cpp" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="src\abi_x64.hpp" />
     <ClInclude Include="src\ttd_pe_utils.hpp" />
     <ClInclude Include="src\ttdutils.hpp" />
     <ClInclude Include="src\utils.hpp" />
+    <ClInclude Include="src\win32meta.hpp" />
   </ItemGroup>
   <ItemGroup>
     <None Include="packages.config" />
@@ -100,6 +104,13 @@
       <TTDRuntime Include="$(TTDRuntimeDir)\TTDReplay.dll;$(TTDRuntimeDir)\TTDReplayCPU.dll" />
     </ItemGroup>
     <Copy SourceFiles="@(TTDRuntime)" DestinationFolder="$(OutDir)" SkipUnchangedFiles="true" Condition="'@(TTDRuntime)'!=''" ContinueOnError="true" />
+  </Target>
+  <!-- The Win32 metadata index the argument decoder reads at startup. Regenerate
+       with tools\build-win32-index.py after bumping the win32json submodule; the
+       extractor still runs (heuristically) if it is absent. -->
+  <Target Name="CopyWin32Index" AfterTargets="Build">
+    <Copy SourceFiles="data\win32-index.bin" DestinationFolder="$(OutDir)" SkipUnchangedFiles="true" Condition="Exists('data\win32-index.bin')" />
+    <Warning Condition="!Exists('data\win32-index.bin')" Text="data\win32-index.bin is missing; run 'python tools\build-win32-index.py' to enable metadata-driven argument decoding." />
   </Target>
   <Import Project="packages\nlohmann.json.3.12.0\build\native\nlohmann.json.targets" Condition="Exists('packages\nlohmann.json.3.12.0\build\native\nlohmann.json.targets')" />
   <Target Name="EnsureNuGetPackageBuildImports" BeforeTargets="PrepareForBuild">

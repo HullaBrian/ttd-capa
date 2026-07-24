@@ -31,9 +31,15 @@ namespace ttdcapa {
 
     struct Options {
         std::filesystem::path trace;
-        std::filesystem::path sample;  // optional on-disk sample for hashing
-        std::filesystem::path output;  // empty will output to stdout
-        uint64_t max_calls = 0;        // 0 means unlimited
+        std::filesystem::path sample;       // optional on-disk sample for hashing
+        std::filesystem::path output;       // empty will output to stdout
+        std::filesystem::path win32_index;  // empty means search the default locations
+        std::string dump_sig;               // print one signature and exit; no trace needed
+        uint64_t max_calls = 0;             // 0 means unlimited
+        size_t max_buffer = 256;            // bytes kept from any one counted buffer
+        bool no_metadata = false;           // force the pre-metadata heuristic capture
+        // Only affects calls with no metadata: blindly grab four extra stack slots.
+        // Functions we have a signature for always capture their true arity.
         bool with_stack_args = false;
     };
     

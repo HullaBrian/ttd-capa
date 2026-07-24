@@ -60,7 +60,19 @@ def main(argv: list[str]) -> int:
     parser.add_argument("--sample", help="optional on-disk sample for accurate hashes")
     parser.add_argument("--extractor", help="path to ttdcapa-extract.exe")
     parser.add_argument("--max-calls", type=int, help="cap recorded API calls (for huge traces)")
-    parser.add_argument("--with-stack-args", action="store_true", help="also capture stack args 5+")
+    parser.add_argument(
+        "--with-stack-args",
+        action="store_true",
+        help="for calls with no Win32 metadata, also grab four stack slots past the "
+        "register args (calls we have a signature for always capture their true arity)",
+    )
+    parser.add_argument("--win32-index", help="path to win32-index.bin (default: next to the extractor)")
+    parser.add_argument(
+        "--no-metadata",
+        action="store_true",
+        help="disable metadata-driven argument decoding entirely",
+    )
+    parser.add_argument("--max-buffer", type=int, help="bytes kept from any one captured buffer (default 256)")
     parser.add_argument("--keep-json", action="store_true", help="keep the intermediate TTD report")
     parser.add_argument("--python", default=sys.executable, help="python interpreter to run capa")
     args, capa_extra = parser.parse_known_args(argv)
@@ -71,9 +83,10 @@ def main(argv: list[str]) -> int:
     trace = Path(args.trace)
     if not trace.is_file():
         sys.exit(f"trace not found: {trace}")
-    rules = Path(args.rules)
+    # absolute, because capa is invoked with cwd set to the report's directory
+    rules = Path(args.rules).resolve()
     if not rules.exists():
-        sys.exit(f"rules path not found: {rules}")
+        sys.exit(f"rules path not found: {args.rules}")
 
     extractor = find_extractor(args.extractor)
 
@@ -89,6 +102,12 @@ def main(argv: list[str]) -> int:
             extract_cmd += ["--max-calls", str(args.max_calls)]
         if args.with_stack_args:
             extract_cmd += ["--with-stack-args"]
+        if args.win32_index:
+            extract_cmd += ["--win32-index", args.win32_index]
+        if args.no_metadata:
+            extract_cmd += ["--no-metadata"]
+        if args.max_buffer:
+            extract_cmd += ["--max-buffer", str(args.max_buffer)]
 
         print(f"[ttd-capa] extracting: {' '.join(extract_cmd)}", file=sys.stderr)
         rc = subprocess.call(extract_cmd)

@@ -48,13 +48,30 @@ namespace ttdcapa {
         return resolvedTraceModuleExports;
     }
 
+    std::string convertWstringToString(const std::wstring& ws) {
+        if (ws.empty()) {
+            return {};
+        }
+        int needed = ::WideCharToMultiByte(CP_UTF8, 0, ws.data(), static_cast<int>(ws.size()), nullptr, 0, nullptr, nullptr);
+        if (needed <= 0) {
+            return {};
+        }
+        std::string out(static_cast<size_t>(needed), '\0');
+        ::WideCharToMultiByte(CP_UTF8, 0, ws.data(), static_cast<int>(ws.size()), out.data(), needed, nullptr, nullptr);
+        return out;
+    }
+
     size_t readMemory(TTD::Replay::UniqueCursor* cursor, TTD::GuestAddress addr, void* dest, unsigned __int64 size) {
         TTD::Replay::MemoryBuffer memoryBuffer = cursor->get()->QueryMemoryBuffer(addr, TTD::BufferView{ dest, size });
         return memoryBuffer.Memory.Size;
     }
 
     bool initializeTTDEngine(TTD::Replay::UniqueReplayEngine& engine, std::wstring traceFilePath) {
-        ConsoleErrorReporting reporter;
+        // The engine holds this pointer for its whole lifetime and calls into it
+        // whenever it reports an error. A stack local would dangle the moment this
+        // function returns, and the first derailment during ReplayForward would then
+        // dispatch a virtual call through reclaimed stack memory.
+        static ConsoleErrorReporting reporter;
         engine->RegisterDebugModeAndLogging(TTD::Replay::DebugModeType::None, &reporter);
 
         if (!engine->Initialize(traceFilePath.c_str())) {
@@ -130,6 +147,105 @@ namespace ttdcapa {
             }
         }
         return std::nullopt;
+    }
+
+    namespace {
+        // Shared by both typed readers: an address below the first 64 KiB is never a
+        // valid user-mode string pointer, and treating one as such is how a flags
+        // DWORD ends up rendered as text.
+        constexpr uint64_t kMinStringAddr = 0x10000;
+
+        bool isPlausibleTextByte(unsigned char c) {
+            return c == '\t' || c == '\r' || c == '\n' || (c >= 0x20 && c != 0x7f);
+        }
+
+        // The -A entry points take strings in the ANSI code page, so their high
+        // bytes are not UTF-8. Emitting them raw would produce a report that the
+        // JSON serializer refuses to write, so transcode before anything else sees
+        // them. Pure-ASCII input (the overwhelming majority) short-circuits.
+        std::string ansiToUtf8(std::string bytes) {
+            bool ascii = true;
+            for (unsigned char c : bytes) {
+                if (c >= 0x80) {
+                    ascii = false;
+                    break;
+                }
+            }
+            if (ascii) {
+                return bytes;
+            }
+
+            int wide = ::MultiByteToWideChar(CP_ACP, 0, bytes.data(), static_cast<int>(bytes.size()), nullptr, 0);
+            if (wide > 0) {
+                std::wstring ws(static_cast<size_t>(wide), L'\0');
+                if (::MultiByteToWideChar(CP_ACP, 0, bytes.data(), static_cast<int>(bytes.size()), ws.data(), wide) == wide) {
+                    return convertWstringToString(ws);
+                }
+            }
+
+            // Unconvertible: keep the ASCII skeleton rather than dropping the string.
+            for (char& c : bytes) {
+                if (static_cast<unsigned char>(c) >= 0x80) {
+                    c = '?';
+                }
+            }
+            return bytes;
+        }
+    }  // namespace
+
+    std::optional<std::string> readAnsiString(TTD::Replay::IThreadView const* thread, uint64_t addr, size_t maxChars) {
+        if (addr < kMinStringAddr) {
+            return std::nullopt;
+        }
+        std::vector<char> buf(maxChars + 1);
+        auto result = thread->QueryMemoryBuffer(TTD::GuestAddress{ addr }, TTD::BufferView{ buf.data(), maxChars });
+        size_t avail = result.Memory.Size;
+        if (avail == 0) {
+            return std::nullopt;
+        }
+
+        std::string s;
+        for (size_t i = 0; i < avail; ++i) {
+            unsigned char c = static_cast<unsigned char>(buf[i]);
+            if (c == 0) {
+                return ansiToUtf8(std::move(s));
+            }
+            if (!isPlausibleTextByte(c)) {
+                return std::nullopt;  // control bytes mean this wasn't a string after all
+            }
+            s.push_back(static_cast<char>(c));
+        }
+        // Ran out of readable memory before the terminator; keep what we have as
+        // long as it looked like text the whole way.
+        return s.empty() ? std::nullopt : std::optional<std::string>(ansiToUtf8(std::move(s)));
+    }
+
+    std::optional<std::string> readWideString(TTD::Replay::IThreadView const* thread, uint64_t addr, size_t maxChars) {
+        if (addr < kMinStringAddr) {
+            return std::nullopt;
+        }
+        std::vector<wchar_t> buf(maxChars + 1);
+        auto result = thread->QueryMemoryBuffer(
+            TTD::GuestAddress{ addr }, TTD::BufferView{ buf.data(), maxChars * sizeof(wchar_t) });
+        size_t availChars = result.Memory.Size / sizeof(wchar_t);
+        if (availChars == 0) {
+            return std::nullopt;
+        }
+
+        size_t len = 0;
+        while (len < availChars && buf[len] != L'\0') {
+            wchar_t wc = buf[len];
+            // Reject C0 controls (other than the usual whitespace) rather than
+            // emitting mojibake for a pointer that only looked like a string.
+            if (wc < 0x20 && wc != L'\t' && wc != L'\r' && wc != L'\n') {
+                return std::nullopt;
+            }
+            ++len;
+        }
+        if (len == 0) {
+            return std::string{};
+        }
+        return convertWstringToString(std::wstring(buf.data(), len));
     }
 
     // Capture one candidate argument: a dereferenced string if it points to one, otherwise the raw integer value.
