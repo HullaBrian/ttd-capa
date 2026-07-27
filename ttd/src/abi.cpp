@@ -283,6 +283,10 @@ namespace ttdcapa {
                 return;
             }
             size_t want = static_cast<size_t>(byteCount < opt.max_buffer ? byteCount : opt.max_buffer);
+            // Record what the buffer really spans, so a consumer can tell a short
+            // buffer from a long one we only kept the head of.
+            arg.bytes_total = byteCount;
+            arg.bytes_capped = want < byteCount;
             std::vector<uint8_t> buf(want);
             auto result = thread->QueryMemoryBuffer(TTD::GuestAddress{ ptr }, TTD::BufferView{ buf.data(), want });
             size_t got = result.Memory.Size;
@@ -291,18 +295,22 @@ namespace ttdcapa {
             }
             buf.resize(got);
 
-            if (kind == ArgKind::AnsiBuffer) {
-                if (auto s = readAnsiString(thread, ptr, got)) {
+            // A character buffer's count is the caller's capacity, so trimming at the
+            // terminator is not truncation -- the string really did end there, and
+            // saying otherwise would send someone hunting for data that never existed.
+            // Only a buffer still running at the cap is genuinely cut short.
+            if (kind == ArgKind::AnsiBuffer || kind == ArgKind::WideBuffer) {
+                size_t charWidth = kind == ArgKind::AnsiBuffer ? 1 : 2;
+                if (auto s = charWidth == 1 ? readAnsiString(thread, ptr, got)
+                                            : readWideString(thread, ptr, got / sizeof(wchar_t))) {
                     arg.str = std::move(*s);
                     arg.has_str = !arg.str.empty();
                 }
-                buf.resize(terminatorEnd(buf, 1));
-            } else if (kind == ArgKind::WideBuffer) {
-                if (auto s = readWideString(thread, ptr, got / sizeof(wchar_t))) {
-                    arg.str = std::move(*s);
-                    arg.has_str = !arg.str.empty();
+                size_t end = terminatorEnd(buf, charWidth);
+                if (end < buf.size()) {
+                    arg.bytes_capped = false;
                 }
-                buf.resize(terminatorEnd(buf, 2));
+                buf.resize(end);
             }
             arg.bytes = std::move(buf);
         }
@@ -582,6 +590,8 @@ namespace ttdcapa {
                 arg.bytes = std::move(fresh.bytes);
                 arg.str = std::move(fresh.str);
                 arg.has_str = fresh.has_str;
+                arg.bytes_total = fresh.bytes_total;
+                arg.bytes_capped = fresh.bytes_capped;
                 arg.from_return = true;
             }
         }

@@ -283,6 +283,11 @@ namespace ttdcapa {
                 }
                 if (!decoded.bytes.empty()) {
                     param["bytes"] = to_hex(decoded.bytes);
+                    // Only when --max-buffer actually cut it short: a string buffer
+                    // trimmed at its NUL is complete, not truncated.
+                    if (decoded.bytes_capped) {
+                        param["bytes_total"] = decoded.bytes_total;
+                    }
                 }
                 if (decoded.is_out) {
                     param["out"] = true;

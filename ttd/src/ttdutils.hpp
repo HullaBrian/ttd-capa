@@ -60,6 +60,8 @@ namespace ttdcapa {
         double fval = 0.0;            // for Float/Double params (read from XMM)
         std::string str;              // decoded string contents
         std::vector<uint8_t> bytes;   // bounded buffer preview
+        uint64_t bytes_total = 0;     // the buffer's real length, when `bytes` is only a prefix
+        bool bytes_capped = false;    // --max-buffer cut the capture short
         bool has_str = false;
         bool has_deref = false;
         bool has_fval = false;
