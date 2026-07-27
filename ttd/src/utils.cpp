@@ -180,6 +180,12 @@ namespace ttdcapa {
             else if (a == L"--dump-sig" && i + 1 < argc) {
                 opt.dump_sig = convertWstringToString(argv[++i]);
             }
+            else if (a == L"--progress") {
+                opt.report_progress = true;
+            }
+            else if (a == L"--cancel-on-stdin") {
+                opt.cancel_on_stdin = true;
+            }
             else if (!a.empty() && a[0] == L'-') {
                 std::cerr << "unknown option\n";
                 return false;

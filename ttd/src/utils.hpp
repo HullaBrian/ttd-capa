@@ -43,6 +43,12 @@ namespace ttdcapa {
         // simply lost. 64 KiB covers typical socket and file reads whole.
         size_t max_buffer = 65536;
         bool no_metadata = false;           // force the pre-metadata heuristic capture
+        // Emit "[progress] <percent> <calls>" lines on stderr as the sweep runs, and
+        // interrupt it when a line reading "cancel" arrives on stdin -- writing out
+        // whatever was collected up to that point. Both are for a UI driving this as a
+        // child process; interactive use is unaffected.
+        bool report_progress = false;
+        bool cancel_on_stdin = false;
         // Only affects calls with no metadata: blindly grab four extra stack slots.
         // Functions we have a signature for always capture their true arity.
         bool with_stack_args = false;

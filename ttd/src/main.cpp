@@ -27,6 +27,7 @@
 #include <TTD/IReplayEngineRegisters.h>
 #include <TTD/ErrorReporting.h>
 
+#include <atomic>
 #include <cstdint>
 #include <cstdio>
 #include <filesystem>
@@ -34,6 +35,7 @@
 #include <iostream>
 #include <optional>
 #include <string>
+#include <thread>
 #include <unordered_map>
 #include <vector>
 
@@ -46,6 +48,11 @@
 using namespace ttdcapa;
 
 Report g_report;
+
+// The cursor currently replaying, for the stdin watcher thread to interrupt. Only
+// non-null while ReplayForward is running; InterruptReplay is documented as safe to
+// call from any thread.
+static std::atomic<TTD::Replay::ICursor*> g_replayingCursor{ nullptr };
 
 // Print one function's decoded signature and exit. Lets the metadata index and the
 // ABI classification be checked without waiting on a trace replay.
@@ -168,11 +175,46 @@ int wmain(int argc, wchar_t** argv) {
 
     TTD::Replay::UniqueCursor sweep{ engine->NewCursor() };
 
+    // Progress is measured against the trace's last sequence number. The call callback
+    // is the only place we are given a position, but call/return events are dense
+    // enough (tens of millions in a large trace) for that to be smooth.
+    const uint64_t final_sequence = static_cast<uint64_t>(engine->GetLastPosition().Sequence);
+    uint64_t next_progress_ms = 0;
+    double highest_pct = 0.0;
+
     auto on_call_return = [&](TTD::GuestAddress target, TTD::GuestAddress fall_through,
         TTD::Replay::IThreadView const* thread) noexcept {
             bool is_call = (static_cast<uint64_t>(fall_through) != 0);
             uint64_t utid = static_cast<uint64_t>(thread->GetThreadInfo().UniqueId);
             ++events_seen;
+
+            // Rate-limited to a few lines a second. The event counter is masked first so
+            // the common path is an AND rather than a clock read.
+            if (opt.report_progress && (events_seen & 0x3FF) == 0) {
+                uint64_t now = ::GetTickCount64();
+                if (now >= next_progress_ms) {
+                    next_progress_ms = now + 200;
+                    uint64_t at = static_cast<uint64_t>(thread->GetPosition().Sequence);
+                    double pct = final_sequence != 0 ? (100.0 * static_cast<double>(at)
+                                                        / static_cast<double>(final_sequence))
+                                                     : 0.0;
+                    if (pct > 100.0) {
+                        pct = 100.0;
+                    }
+                    // Positions from different threads are not perfectly ordered, so a
+                    // sample occasionally reads behind the one before it (about 4% of
+                    // them). Clamp here rather than letting a progress bar walk
+                    // backwards.
+                    if (pct < highest_pct) {
+                        pct = highest_pct;
+                    } else {
+                        highest_pct = pct;
+                    }
+                    std::fprintf(stderr, "[progress] %.2f %zu\n", pct,
+                                 g_report.process.calls.size());
+                    std::fflush(stderr);
+                }
+            }
 
             if (is_call) {
                 auto it = resolvedTraceModuleExports.find(static_cast<uint64_t>(target));
@@ -300,7 +342,45 @@ int wmain(int argc, wchar_t** argv) {
                           TTD::Replay::ReplayFlags::ReplayAllSegmentsWithoutFiltering);
     sweep->SetPosition(TTD::Replay::Position::Min);
     std::cerr << "[+] Beginning execution sweep...\n";
-    sweep->ReplayForward();
+    if (opt.report_progress) {
+        // The sweep is only part of the wall clock -- serialising a multi-hundred-MB
+        // report takes comparable time -- so name the phases rather than let a caller's
+        // progress bar sit at 100% looking wedged.
+        std::fprintf(stderr, "[phase] sweep\n");
+        std::fflush(stderr);
+    }
+
+    // A UI driving this as a child process can ask to stop early. Everything recorded
+    // so far is already in g_report, so an interrupted sweep still yields a usable
+    // report -- only the calls that had not returned yet lose their return values and
+    // [Out] parameters.
+    g_replayingCursor.store(sweep.get());
+    std::thread cancel_watcher;
+    if (opt.cancel_on_stdin) {
+        cancel_watcher = std::thread([] {
+            std::string line;
+            while (std::getline(std::cin, line)) {
+                if (line.rfind("cancel", 0) == 0) {
+                    if (auto* cursor = g_replayingCursor.load()) {
+                        cursor->InterruptReplay();
+                    }
+                    return;
+                }
+            }
+        });
+        // Detached because it is parked in a blocking read; the process exits out from
+        // under it once the report is written.
+        cancel_watcher.detach();
+    }
+
+    TTD::Replay::ICursorView::ReplayResult result = sweep->ReplayForward();
+    g_replayingCursor.store(nullptr);
+
+    const bool interrupted = result.StopReason == TTD::Replay::EventType::Interrupted;
+    if (interrupted) {
+        std::cerr << "[!] Sweep cancelled; writing the " << g_report.process.calls.size()
+                  << " calls recorded so far\n";
+    }
 
     if (limit_hit) {
         std::cerr << "[!] Reached --max-calls limit (" << opt.max_calls << ")\n";
@@ -308,6 +388,10 @@ int wmain(int argc, wchar_t** argv) {
     std::cerr << "[+] Recorded " << g_report.process.calls.size() << " API calls from "
               << events_seen << " call/return events\n";
 
+    if (opt.report_progress) {
+        std::fprintf(stderr, "[phase] write\n");
+        std::fflush(stderr);
+    }
     writeReport(opt.output);
 
     std::cerr << "[!] Exiting...\n";
