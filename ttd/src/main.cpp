@@ -394,15 +394,25 @@ int wmain(int argc, wchar_t** argv) {
         std::fflush(stderr);
     }
     if (!opt.binary_output.empty()) {
+        uint64_t began = ::GetTickCount64();
         std::string err;
         if (binreport::write(opt.binary_output, g_report, err)) {
-            std::cerr << "[+] Wrote binary report " << opt.binary_output.string() << "\n";
+            uint64_t took = ::GetTickCount64() - began;
+            std::cerr << "[+] Wrote binary report " << opt.binary_output.string() << " in "
+                      << (static_cast<double>(took) / 1000.0) << "s\n";
+            // Machine-readable for a UI that wants to show where the time went.
+            std::fprintf(stderr, "[timing] write %.3f\n", static_cast<double>(took) / 1000.0);
+            std::fflush(stderr);
         } else {
             std::cerr << "[-] " << err << "\n";
         }
     }
     if (!opt.output.empty()) {
+        uint64_t began = ::GetTickCount64();
         writeReport(opt.output);
+        std::fprintf(stderr, "[timing] write-json %.3f\n",
+                     static_cast<double>(::GetTickCount64() - began) / 1000.0);
+        std::fflush(stderr);
     }
 
     std::cerr << "[!] Exiting...\n";

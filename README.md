@@ -148,9 +148,12 @@ JSON is a poor fit for that second job. On a 3.4M-call trace, measured:
 
 | | JSON | binary |
 | --- | --- | --- |
-| write (of a 44s run whose sweep is ~30s) | ~56s | ~14s |
+| write | ~56s | **3.6s** |
 | load back | 16.6s (8.9s parse + 7.6s building objects) | a memory map |
 | size | 654 MB | 585 MB |
+
+End to end, extracting and then viewing that trace went from ~103s to ~34s, of which the sweep
+itself is ~30s. The format went from two thirds of the wall clock to a tenth of it.
 
 The load figure is the important one: 138ms of that 16.6s was disk I/O, so the cost was never the
 bytes, it was parsing text and allocating several million small objects. The binary layout has
