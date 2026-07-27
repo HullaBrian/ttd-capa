@@ -326,8 +326,17 @@ namespace ttdcapa {
                     }
                     break;
                 case ArgKind::PtrToInt: {
+                    // An 8-byte pointee on a 32-bit guest is almost always a
+                    // pointer-sized type the index measured at x64 width -- HANDLE*,
+                    // SIZE_T*, ULONG_PTR* and friends. Reading 8 bytes there splices
+                    // the following dword into the value, so trust the guest's width
+                    // instead. A genuine 64-bit pointee (LONGLONG*) loses its high
+                    // half, which is still better than a value mixed with unrelated
+                    // memory. Telling the two apart needs the index to carry 32-bit
+                    // sizes; see the README.
+                    uint16_t eff = (pointerSize == 4 && pointeeSize == 8) ? 4 : pointeeSize;
                     uint64_t v = 0;
-                    if (derefScalar(thread, ptr, pointeeSize, pointerSize, v)) {
+                    if (derefScalar(thread, ptr, eff, pointerSize, v)) {
                         arg.deref = v;
                         arg.has_deref = true;
                     }
