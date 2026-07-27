@@ -110,8 +110,18 @@ namespace ttdcapa {
         std::vector<std::pair<uint64_t, std::string>> exports;  // exported function VA -> export name
     };
 
+    // One resolved call target: which module it belongs to, its export name, and the
+    // bitness of that module. The bitness is per module rather than per trace because
+    // a WoW64 process runs 32-bit and 64-bit code side by side, and it decides which
+    // calling convention the call's arguments follow.
+    struct ResolvedExport {
+        std::wstring module;
+        std::string api;
+        bool is64 = true;
+    };
+
     // Navigates all module load events, and returns a map of all function VAs along with their associated module and function name
-    std::unordered_map<uint64_t, std::pair<std::wstring, std::string>> resolveTraceModuleExports(TTD::Replay::UniqueReplayEngine& engine, TTD::Replay::UniqueCursor& cursor);
+    std::unordered_map<uint64_t, ResolvedExport> resolveTraceModuleExports(TTD::Replay::UniqueReplayEngine& engine, TTD::Replay::UniqueCursor& cursor);
 
     // TTD memory read utility function
     size_t readMemory(TTD::Replay::UniqueCursor* cursor, TTD::GuestAddress addr, void* dest, unsigned __int64 size);

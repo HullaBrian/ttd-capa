@@ -176,7 +176,21 @@ python ttd-timeline.py <JSON REPORT PATH> --calls
 ```
 
 # Limitations
-- Only x64 traces are supported at the moment (no x86 or ARM)
+- x64 and x86 traces are supported, including WoW64; ARM64 is not. Bitness is decided per call
+  from the PE header of the module owning the call target rather than once per trace -- a WoW64
+  process runs both widths at once, and `SystemInfo.ProcessorArchitecture` describes the machine
+  that did the recording, not the process that was recorded
+- On x86, a parameter whose stack footprint cannot be derived from the index makes the whole
+  signature undecodable, and the call falls back to the heuristic capture. This affects any API
+  taking a pointer-sized scalar (`SIZE_T`, `WPARAM`, `LPARAM` and the other typedefs over
+  `UIntPtr`): the index records the x64 width of 8, and an 8 is ambiguous between a genuine
+  64-bit type, which pushes 8 bytes on x86 too, and a pointer-sized one, which pushes 4.
+  Guessing would silently shift every later parameter. Roughly a fifth of commonly-seen APIs are
+  affected, `VirtualAlloc` and `HeapAlloc` among them; `--dump-sig` marks them `[no x86 layout]`.
+  Fixing it means having `build-win32-index.py` emit the x86 footprint alongside the x64 one --
+  there is a spare pad byte in the parameter record for exactly that
+- Aggregates passed by value are declined on x86 for the same reason: the x64 ABI passes them by
+  hidden pointer, so the index records a pointer where x86 pushes the whole struct
 - Only the functions directly exported by loaded modules are logged in the JSON report
 - Argument decoding is exact only for APIs covered by the Win32 metadata (public SDK surface). `ntdll` internals,
   undocumented APIs, and CRT helpers fall back to the four-register heuristic, so their arguments may still be wrong

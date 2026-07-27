@@ -16,8 +16,13 @@ namespace ttdcapa {
 
 	// Parse the export directory of the PE image mapped at `base`. Appends one entry
 	// per named export (forwarders are skipped). Returns false if `base` is not a
-	// readable PE32+ image at this position.
-	bool getModuleExports(TTD::Replay::UniqueCursor* cursor, TTD::GuestAddress moduleBaseAddress, std::vector<std::pair<uint64_t, std::string>>& out);
+	// readable PE32 or PE32+ image at this position.
+	//
+	// `is64Bit`, when given, receives the image's bitness. A WoW64 trace contains both
+	// kinds at once, and the bitness of the module owning a call target is what selects
+	// the calling convention used to decode that call's arguments.
+	bool getModuleExports(TTD::Replay::UniqueCursor* cursor, TTD::GuestAddress moduleBaseAddress,
+		std::vector<std::pair<uint64_t, std::string>>& out, bool* is64Bit = nullptr);
 
 	// Parse the import directory of the PE image mapped at `base`.
 	bool getModuleImports(TTD::Replay::UniqueCursor* cursor, TTD::GuestAddress moduleBaseAddress, std::vector<ImportRecord>& out);

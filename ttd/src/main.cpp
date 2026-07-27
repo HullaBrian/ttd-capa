@@ -1,6 +1,6 @@
 // ttdcapa-extract: sweep a Time Travel Debugging (.run) trace and emit a neutral
 // "TTD report" JSON consumed by capa's TTD dynamic backend
-// (capa/features/extractors/ttd/). x64 traces only in v1.
+// (capa/features/extractors/ttd/). x64 and x86 traces, including WoW64.
 //
 //   ttdcapa-extract <trace.run> [--sample <sample.exe>] [-o <out.json>]
 //                   [--max-calls N] [--with-stack-args] [--win32-index <path>]
@@ -8,8 +8,12 @@
 //   ttdcapa-extract --dump-sig <ApiName>
 //
 // Arguments are decoded against the pre-baked Win32 metadata index whenever the
-// resolved export is in it (see win32meta.hpp / abi_x64.hpp); calls we have no
+// resolved export is in it (see win32meta.hpp / abi.hpp); calls we have no
 // signature for fall back to the original heuristic capture.
+//
+// Bitness is decided per call from the module owning the target, not once for the
+// trace: SystemInfo reports the *recording machine's* architecture, which says
+// nothing about the guest, and a WoW64 process runs both widths at once.
 
 #include <cassert>
 #define DBG_ASSERT(cond) assert(cond)
@@ -37,7 +41,7 @@
 #include "utils.hpp"
 #include "ttd_pe_utils.hpp"
 #include "win32meta.hpp"
-#include "abi_x64.hpp"
+#include "abi.hpp"
 
 using namespace ttdcapa;
 
@@ -51,13 +55,21 @@ static int dumpSignature(const std::string& api) {
         std::cerr << "[-] '" << api << "' is not in the metadata index\n";
         return 3;
     }
+    std::vector<uint16_t> x86Offsets;
+    bool x86Ok = x86StackLayout(*sig, x86Offsets);
+
     std::cout << sig->name << "  dll=" << sig->dll
               << "  params=" << static_cast<int>(sig->paramCount)
               << (sig->hiddenRetPtr() ? "  [hidden-return-pointer]" : "")
-              << (sig->unsupported() ? "  [unsupported]" : "") << "\n";
+              << (sig->unsupported() ? "  [unsupported]" : "")
+              << (x86Ok ? "" : "  [no x86 layout]") << "\n";
     for (uint8_t i = 0; i < sig->paramCount; ++i) {
         const win32meta::ParamSig& p = sig->params[i];
-        std::cout << "  slot " << static_cast<int>(p.slot) << "  " << p.name
+        std::cout << "  slot " << static_cast<int>(p.slot);
+        if (x86Ok) {
+            std::cout << "  x86@esp+" << (4 + x86Offsets[i]);
+        }
+        std::cout << "  " << p.name
                   << " : " << p.type << "  (" << win32meta::kindName(p.kind) << ")";
         if (p.isIn()) std::cout << " in";
         if (p.isOut()) std::cout << " out";
@@ -110,12 +122,11 @@ int wmain(int argc, wchar_t** argv) {
 
     // Begin building report
     g_report.trace_path = opt.trace;
+    // Deliberately not gated on sys.System.ProcessorArchitecture: that field comes
+    // from GetSystemInfo() on the recording machine, so a 32-bit process recorded on
+    // an x64 box reports AMD64. The guest's real width comes from each module's PE
+    // header while resolving exports, below.
     TTD::SystemInfo const& sys = engine->GetSystemInfo();
-    uint16_t pa = static_cast<uint16_t>(sys.System.ProcessorArchitecture);
-    if (pa != PROCESSOR_ARCHITECTURE_AMD64) {
-        std::cerr << "[-] Only x64 traces are supported in this version (arch=" << static_cast<int>(pa) << ").\n";
-        return 2;
-    }
     g_report.process.pid = static_cast<uint64_t>(sys.ProcessId);
     
     TTD::Replay::UniqueCursor inspection_cursor{ engine->NewCursor() };
@@ -124,10 +135,17 @@ int wmain(int argc, wchar_t** argv) {
     initializeReport(engine, inspection_cursor, opt.sample);
 
     // Get list of function VAs used for call sweep
-    std::unordered_map<uint64_t, std::pair<std::wstring, std::string>> resolvedTraceModuleExports;
+    std::unordered_map<uint64_t, ResolvedExport> resolvedTraceModuleExports;
     resolvedTraceModuleExports = resolveTraceModuleExports(engine, inspection_cursor);
+    size_t exports32 = 0;
+    for (const auto& entry : resolvedTraceModuleExports) {
+        if (!entry.second.is64) {
+            ++exports32;
+        }
+    }
     std::cerr << "[+] Resolved " << resolvedTraceModuleExports.size()
-              << " exported module functions across execution\n";
+              << " exported module functions across execution ("
+              << exports32 << " in 32-bit modules)\n";
 
     size_t thread_count = engine->GetThreadCount();
     TTD::Replay::ThreadInfo const* thread_list = engine->GetThreadList();
@@ -140,6 +158,7 @@ int wmain(int argc, wchar_t** argv) {
     struct InFlight {
         uint64_t ret_addr = 0;
         size_t call_index = 0;
+        GuestArch arch = GuestArch::X64;  // must match the entry pass to re-read correctly
         std::vector<PendingOut> pending;
     };
     std::unordered_map<uint64_t, std::vector<InFlight>> in_flight;
@@ -168,8 +187,8 @@ int wmain(int argc, wchar_t** argv) {
                 ttdcapa::CallRecord rec;
                 rec.tid = utid;
                 rec.seq = seq++;
-                rec.module = it->second.first;
-                rec.api = it->second.second;
+                rec.module = it->second.module;
+                rec.api = it->second.api;
 
                 // Retrieve usable TTD timestamp
                 TTD::Replay::Position pos = thread->GetPosition();
@@ -185,34 +204,67 @@ int wmain(int argc, wchar_t** argv) {
                 TTD::Replay::RegisterContext regs = thread->GetCrossPlatformContext();
                 auto const* ctx = reinterpret_cast<AMD64_CONTEXT const*>(&regs);
 
+                // The target module's PE header decided this; in a WoW64 trace the
+                // 32-bit and 64-bit halves alternate call by call.
+                CallFrame frame;
+                frame.arch = it->second.is64 ? GuestArch::X64 : GuestArch::X86;
+                frame.thread = thread;
+                if (frame.arch == GuestArch::X64) {
+                    frame.x64 = ctx;
+                } else {
+                    frame.x86 = reinterpret_cast<X86_NT5_CONTEXT const*>(&regs);
+                }
+
                 std::vector<PendingOut> pending;
                 win32meta::FuncSig const* sig = win32meta::index().lookup(rec.api);
-                if (sig != nullptr && !sig->unsupported()) {
+                // decodeArgs declines a signature it cannot lay out for this
+                // architecture, in which case the heuristic path below is still
+                // better than parameters read from the wrong offsets.
+                if (sig != nullptr && !sig->unsupported()
+                    && decodeArgs(*sig, frame, decode_opt, rec.params, pending)) {
                     // We know the real arity, so capture exactly that many arguments
                     // -- no stale RDX/R8/R9 residue masquerading as parameters.
-                    decodeArgs(*sig, *ctx, thread, decode_opt, rec.params, pending);
                     rec.args = toCapaArgs(rec.params);
                     rec.metadata = true;
                 } else {
-                    rec.args.push_back(captureCallArg(thread, ctx->Rcx));
-                    rec.args.push_back(captureCallArg(thread, ctx->Rdx));
-                    rec.args.push_back(captureCallArg(thread, ctx->R8));
-                    rec.args.push_back(captureCallArg(thread, ctx->R9));
+                    rec.params.clear();
+                    pending.clear();
 
-                    if (opt.with_stack_args) {  // Capture arguments on stack based on offsets from RSP
-                        for (int k = 0; k < 4; ++k) {
-                            uint64_t slot = ctx->Rsp + 0x28 + static_cast<uint64_t>(k) * 8;
-                            uint64_t v = 0;
-                            if (thread->QueryMemoryBuffer(TTD::GuestAddress{ slot }, TTD::BufferView{ &v, sizeof(v) })
+                    if (frame.arch == GuestArch::X86) {
+                        // Nothing arrives in registers on x86, so the heuristic has to
+                        // read the stack even without --with-stack-args. Four words
+                        // keeps it comparable to the x64 fallback's four registers.
+                        int words = opt.with_stack_args ? 8 : 4;
+                        for (int k = 0; k < words; ++k) {
+                            uint64_t addr = static_cast<uint64_t>(frame.x86->Esp) + 4 + static_cast<uint64_t>(k) * 4;
+                            uint32_t v = 0;
+                            if (thread->QueryMemoryBuffer(TTD::GuestAddress{ addr }, TTD::BufferView{ &v, sizeof(v) })
                                 .Memory.Size == sizeof(v)) {
                                 rec.args.push_back(captureCallArg(thread, v));
+                            }
+                        }
+                    } else {
+                        rec.args.push_back(captureCallArg(thread, ctx->Rcx));
+                        rec.args.push_back(captureCallArg(thread, ctx->Rdx));
+                        rec.args.push_back(captureCallArg(thread, ctx->R8));
+                        rec.args.push_back(captureCallArg(thread, ctx->R9));
+
+                        if (opt.with_stack_args) {  // Capture arguments on stack based on offsets from RSP
+                            for (int k = 0; k < 4; ++k) {
+                                uint64_t slot = ctx->Rsp + 0x28 + static_cast<uint64_t>(k) * 8;
+                                uint64_t v = 0;
+                                if (thread->QueryMemoryBuffer(TTD::GuestAddress{ slot }, TTD::BufferView{ &v, sizeof(v) })
+                                    .Memory.Size == sizeof(v)) {
+                                    rec.args.push_back(captureCallArg(thread, v));
+                                }
                             }
                         }
                     }
                 }
 
                 size_t idx = g_report.process.calls.size();
-                in_flight[utid].push_back(InFlight{ static_cast<uint64_t>(fall_through), idx, std::move(pending) });
+                in_flight[utid].push_back(
+                    InFlight{ static_cast<uint64_t>(fall_through), idx, frame.arch, std::move(pending) });
                 g_report.process.calls.push_back(std::move(rec));
             } else {
                 // Log most recent function called as returned and capture return value
@@ -226,7 +278,12 @@ int wmain(int argc, wchar_t** argv) {
                         if (!top.pending.empty()) {
                             // The payoff of a time-travel trace: [Out] parameters can be
                             // rendered filled in, which a live debugger can't easily do.
-                            resolvePendingOuts(top.pending, thread, decode_opt, call.params);
+                            // Pointer width has to match the entry pass, so carry the
+                            // architecture over rather than re-deriving it here.
+                            CallFrame retFrame;
+                            retFrame.arch = top.arch;
+                            retFrame.thread = thread;
+                            resolvePendingOuts(top.pending, retFrame, decode_opt, call.params);
                             call.args = toCapaArgs(call.params);
                         }
                         it->second.pop_back();

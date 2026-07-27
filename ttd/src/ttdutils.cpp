@@ -19,8 +19,8 @@
 extern ttdcapa::Report g_report;
 
 namespace ttdcapa {
-    std::unordered_map<uint64_t, std::pair<std::wstring, std::string>> resolveTraceModuleExports(TTD::Replay::UniqueReplayEngine& engine, TTD::Replay::UniqueCursor& cursor) {
-        std::unordered_map<uint64_t, std::pair<std::wstring, std::string>> resolvedTraceModuleExports;  // function VA -> (module, api)
+    std::unordered_map<uint64_t, ResolvedExport> resolveTraceModuleExports(TTD::Replay::UniqueReplayEngine& engine, TTD::Replay::UniqueCursor& cursor) {
+        std::unordered_map<uint64_t, ResolvedExport> resolvedTraceModuleExports;  // function VA -> resolved target
 
         size_t count = engine->GetModuleLoadedEventCount();
         TTD::Replay::ModuleLoadedEvent const* moduleLoadEvents = engine->GetModuleLoadedEventList();
@@ -38,9 +38,14 @@ namespace ttdcapa {
             std::wstring moduleNameStripped(moduleBaseName.begin(), moduleBaseName.end());
 
             std::vector<std::pair<uint64_t, std::string>> moduleExports;
-            if (getModuleExports(&cursor, moduleLoadEvent.pModule->Address, moduleExports)) {
+            bool is64 = true;
+            if (getModuleExports(&cursor, moduleLoadEvent.pModule->Address, moduleExports, &is64)) {
                 for (auto& moduleExport : moduleExports) {
-                    resolvedTraceModuleExports.emplace(moduleExport.first, std::make_pair(moduleNameStripped, std::move(moduleExport.second)));
+                    ResolvedExport resolved;
+                    resolved.module = moduleNameStripped;
+                    resolved.api = std::move(moduleExport.second);
+                    resolved.is64 = is64;
+                    resolvedTraceModuleExports.emplace(moduleExport.first, std::move(resolved));
                 }
             }
         }

@@ -118,7 +118,12 @@ namespace ttdcapa {
             bool ok = getModuleImports(&cursor, mbase, g_report.imports);
             ok = ttdcapa::getModuleSections(&cursor, mbase, g_report.sections) && ok;
 
-            if (getModuleExports(&cursor, mbase, exps)) {
+            // The main image's PE format is what the report calls the trace's
+            // architecture. A WoW64 trace also holds 64-bit system modules, but the
+            // process it recorded is the 32-bit one.
+            bool mainIs64 = true;
+            if (getModuleExports(&cursor, mbase, exps, &mainIs64)) {
+                g_report.arch = mainIs64 ? "x64" : "x86";
                 for (auto& e : exps) {
                     ExportRecord exportRecord;
                     exportRecord.name = e.second;
@@ -144,11 +149,8 @@ namespace ttdcapa {
             }
         }
 
-        size_t thread_count = engine->GetThreadCount();
-        TTD::Replay::ThreadInfo const* thread_list = engine->GetThreadList();
-        for (size_t i = 0; i < thread_count; ++i) {
-            g_report.process.threads.push_back(static_cast<uint64_t>(thread_list[i].UniqueId));
-        }
+        // The thread list is filled in by the caller after this returns; collecting it
+        // here too duplicated every entry.
     }
 
     bool parse_args(int argc, wchar_t** argv, Options& opt) {

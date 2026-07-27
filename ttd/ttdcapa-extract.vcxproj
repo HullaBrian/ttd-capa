@@ -70,7 +70,7 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
-    <ClCompile Include="src\abi_x64.cpp" />
+    <ClCompile Include="src\abi.cpp" />
     <ClCompile Include="src\main.cpp" />
     <ClCompile Include="src\ttd_pe_utils.cpp" />
     <ClCompile Include="src\ttdutils.cpp" />
@@ -78,7 +78,7 @@
     <ClCompile Include="src\win32meta.cpp" />
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="src\abi_x64.hpp" />
+    <ClInclude Include="src\abi.hpp" />
     <ClInclude Include="src\ttd_pe_utils.hpp" />
     <ClInclude Include="src\ttdutils.hpp" />
     <ClInclude Include="src\utils.hpp" />

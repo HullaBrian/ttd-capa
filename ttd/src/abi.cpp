@@ -1,4 +1,4 @@
-#include "abi_x64.hpp"
+#include "abi.hpp"
 
 #include <cstdio>
 #include <cstring>
@@ -16,6 +16,12 @@ namespace ttdcapa {
         // Guards against a mis-typed count parameter turning into a huge read.
         constexpr uint64_t kMaxCountElements = 1u << 20;
 
+        // Every x86 stack argument occupies a whole number of 4-byte words.
+        constexpr uint16_t kX86StackAlign = 4;
+
+        // Matches win32meta's MAX_PARAMS; the index never emits more.
+        constexpr size_t kMaxParams = 32;
+
         bool readGuest(TTD::Replay::IThreadView const* thread, uint64_t addr, void* dst, size_t size) {
             if (addr < kMinDerefAddr || size == 0) {
                 return false;
@@ -24,22 +30,147 @@ namespace ttdcapa {
             return result.Memory.Size == size;
         }
 
-        // The value in `slot`, honouring the shared integer/SSE slot numbering.
-        uint64_t fetchSlot(const AMD64_CONTEXT& ctx, TTD::Replay::IThreadView const* thread,
-                           uint8_t slot, bool isFloat, bool& ok) {
+        // True for the kinds that are a pointer in the guest, whatever they point at.
+        bool isPointerKind(ArgKind kind) {
+            switch (kind) {
+                case ArgKind::AnsiString:
+                case ArgKind::WideString:
+                case ArgKind::AnsiBuffer:
+                case ArgKind::WideBuffer:
+                case ArgKind::ByteBuffer:
+                case ArgKind::PtrToInt:
+                case ArgKind::StructPtr:
+                case ArgKind::FuncPtr:
+                case ArgKind::Guid:
+                case ArgKind::Pointer:
+                case ArgKind::PtrToAnsiString:
+                case ArgKind::PtrToWideString:
+                case ArgKind::Handle:  // opaque but pointer-sized
+                    return true;
+                default:
+                    return false;
+            }
+        }
+
+        // An aggregate the x64 ABI passes by hidden pointer but x86 pushes by value.
+        // The index cannot tell us its x86 footprint -- it records the x64 size, which
+        // is wrong for any struct holding a pointer -- so its presence makes the whole
+        // signature unlayoutable on x86. The display type is the discriminator: a real
+        // pointer parameter renders as "OVERLAPPED*", a by-value one as "VARIANT".
+        bool isByValueAggregate(const win32meta::ParamSig& p) {
+            if (p.kind != ArgKind::StructPtr) {
+                return false;
+            }
+            size_t len = p.type != nullptr ? std::strlen(p.type) : 0;
+            return len == 0 || p.type[len - 1] != '*';
+        }
+
+        // Bytes one parameter occupies on the x86 argument stack, or 0 if unknowable.
+        uint16_t x86StackFootprint(const win32meta::ParamSig& p) {
+            if (isByValueAggregate(p)) {
+                return 0;
+            }
+            uint16_t size = 4;
+            switch (p.kind) {
+                case ArgKind::Float:
+                    size = 4;
+                    break;
+                case ArgKind::Double:
+                    size = 8;
+                    break;
+                case ArgKind::Integer:
+                case ArgKind::Enum:
+                case ArgKind::Bool:
+                    // For scalars the index stores the value's own width here -- but
+                    // computed for x64, where a pointer-sized scalar (UIntPtr, and the
+                    // SIZE_T/WPARAM/LPARAM typedefs over it) is 8 bytes and on x86 is
+                    // 4. An 8 here is therefore ambiguous: Int64 really does push 8
+                    // bytes on x86, UIntPtr pushes 4, and the index cannot tell us
+                    // which. Guessing would silently shift every later parameter, so
+                    // decline and let the caller fall back to the heuristic.
+                    //
+                    // Resolving this properly means having the builder emit the x86
+                    // footprint alongside the x64 one; there is a spare pad byte in the
+                    // parameter record for it.
+                    if (p.pointeeSize == 8) {
+                        return 0;
+                    }
+                    size = (p.pointeeSize >= 1 && p.pointeeSize < 8) ? p.pointeeSize : 4;
+                    break;
+                default:
+                    size = 4;  // pointers, handles, and anything unclassified
+                    break;
+            }
+            return static_cast<uint16_t>((size + kX86StackAlign - 1) / kX86StackAlign * kX86StackAlign);
+        }
+
+        // Byte offset of each parameter from the first argument on the x86 stack.
+        // Returns false when any parameter's footprint is unknown, in which case every
+        // offset after it would be wrong and the signature must not be used.
+        bool computeStackOffsets(const win32meta::FuncSig& sig, uint16_t (&offsets)[kMaxParams]) {
+            // `slot` is the positional ABI index and is already shifted for a hidden
+            // return pointer, which on x86 is simply the first pushed argument. Walk in
+            // slot order so a shifted signature still lays out correctly.
+            uint16_t running[kMaxParams] = {};
+            uint16_t footprint[kMaxParams] = {};
+            uint8_t maxSlot = 0;
+
+            for (uint8_t i = 0; i < sig.paramCount && i < kMaxParams; ++i) {
+                const win32meta::ParamSig& p = sig.params[i];
+                if (p.slot >= kMaxParams) {
+                    return false;
+                }
+                uint16_t bytes = x86StackFootprint(p);
+                if (bytes == 0) {
+                    return false;
+                }
+                footprint[p.slot] = bytes;
+                maxSlot = p.slot > maxSlot ? p.slot : maxSlot;
+            }
+
+            // A hidden return pointer occupies slot 0 without appearing in the
+            // parameter list, so fill any gap with a pointer-sized push.
+            uint16_t offset = 0;
+            for (uint8_t s = 0; s <= maxSlot && s < kMaxParams; ++s) {
+                running[s] = offset;
+                offset += footprint[s] != 0 ? footprint[s] : kX86StackAlign;
+            }
+
+            for (uint8_t i = 0; i < sig.paramCount && i < kMaxParams; ++i) {
+                offsets[i] = running[sig.params[i].slot];
+            }
+            return true;
+        }
+
+        // The value of parameter `index`, from wherever its architecture puts it.
+        uint64_t fetchArg(const CallFrame& frame, const win32meta::FuncSig& sig, uint8_t index,
+                          const uint16_t (&x86Offsets)[kMaxParams], bool& ok) {
+            const win32meta::ParamSig& p = sig.params[index];
             ok = true;
-            if (slot < 4) {
-                if (isFloat) {
+
+            if (frame.arch == GuestArch::X86) {
+                // At the callee's first instruction ESP points at the return address,
+                // so the arguments begin one word above it.
+                uint64_t addr = static_cast<uint64_t>(frame.x86->Esp) + kX86StackAlign + x86Offsets[index];
+                uint64_t v = 0;
+                size_t width = p.kind == ArgKind::Double ? 8 : 4;
+                ok = readGuest(frame.thread, addr, &v, width);
+                return v;
+            }
+
+            const AMD64_CONTEXT& ctx = *frame.x64;
+            if (p.slot < 4) {
+                if (p.isFloat()) {
                     const M128BIT* xmm[4] = { &ctx.Xmm0, &ctx.Xmm1, &ctx.Xmm2, &ctx.Xmm3 };
-                    return xmm[slot]->Low;
+                    return xmm[p.slot]->Low;
                 }
                 const uint64_t gpr[4] = { ctx.Rcx, ctx.Rdx, ctx.R8, ctx.R9 };
-                return gpr[slot];
+                return gpr[p.slot];
             }
             // Above the shadow space the caller reserved for RCX/RDX/R8/R9.
-            uint64_t addr = ctx.Rsp + 0x28 + static_cast<uint64_t>(slot - 4) * 8;
+            uint64_t addr = ctx.Rsp + 0x28 + static_cast<uint64_t>(p.slot - 4) * 8;
             uint64_t v = 0;
-            ok = readGuest(thread, addr, &v, sizeof(v));
+            ok = readGuest(frame.thread, addr, &v, sizeof(v));
             return v;
         }
 
@@ -62,8 +193,11 @@ namespace ttdcapa {
             return v;
         }
 
-        bool derefScalar(TTD::Replay::IThreadView const* thread, uint64_t ptr, uint16_t size, uint64_t& out) {
-            uint16_t width = size == 0 ? 8 : (size > 8 ? 8 : size);
+        // `fallbackWidth` is what to read when the metadata did not pin the pointee
+        // down -- the guest's pointer width, since an untyped pointee is usually one.
+        bool derefScalar(TTD::Replay::IThreadView const* thread, uint64_t ptr, uint16_t size,
+                         uint16_t fallbackWidth, uint64_t& out) {
+            uint16_t width = size == 0 ? fallbackWidth : (size > 8 ? 8 : size);
             uint8_t buf[8] = {};
             if (!readGuest(thread, ptr, buf, width)) {
                 return false;
@@ -173,10 +307,10 @@ namespace ttdcapa {
             arg.bytes = std::move(buf);
         }
 
-        // Everything that needs the callee to have run. Shared by the entry pass
-        // (for [In] parameters, which are already valid) and the return pass.
+        // Everything that needs a pointer followed. Shared by the entry pass (for
+        // [In] parameters, which are already valid) and the return pass.
         void dereference(TTD::Replay::IThreadView const* thread, const DecodeOptions& opt,
-                         ArgKind kind, uint64_t ptr, uint16_t pointeeSize,
+                         ArgKind kind, uint64_t ptr, uint16_t pointeeSize, uint16_t pointerSize,
                          uint64_t byteCount, DecodedArg& arg) {
             switch (kind) {
                 case ArgKind::AnsiString:
@@ -193,7 +327,7 @@ namespace ttdcapa {
                     break;
                 case ArgKind::PtrToInt: {
                     uint64_t v = 0;
-                    if (derefScalar(thread, ptr, pointeeSize, v)) {
+                    if (derefScalar(thread, ptr, pointeeSize, pointerSize, v)) {
                         arg.deref = v;
                         arg.has_deref = true;
                     }
@@ -201,8 +335,9 @@ namespace ttdcapa {
                 }
                 case ArgKind::PtrToAnsiString:
                 case ArgKind::PtrToWideString: {
+                    // The pointee here is itself a pointer, so its width is the guest's.
                     uint64_t inner = 0;
-                    if (!derefScalar(thread, ptr, 8, inner)) {
+                    if (!derefScalar(thread, ptr, pointerSize, pointerSize, inner)) {
                         break;
                     }
                     arg.deref = inner;
@@ -280,12 +415,40 @@ namespace ttdcapa {
 
     }  // namespace
 
-    void decodeArgs(const win32meta::FuncSig& sig,
-                    const AMD64_CONTEXT& ctx,
-                    TTD::Replay::IThreadView const* thread,
+    bool x86StackLayout(const win32meta::FuncSig& sig, std::vector<uint16_t>& offsets) {
+        offsets.clear();
+        if (sig.paramCount > kMaxParams) {
+            return false;
+        }
+        uint16_t computed[kMaxParams] = {};
+        if (!computeStackOffsets(sig, computed)) {
+            return false;
+        }
+        offsets.assign(computed, computed + sig.paramCount);
+        return true;
+    }
+
+    bool decodeArgs(const win32meta::FuncSig& sig,
+                    const CallFrame& frame,
                     const DecodeOptions& opt,
                     std::vector<DecodedArg>& out,
                     std::vector<PendingOut>& deferred) {
+        if (sig.paramCount > kMaxParams) {
+            return false;
+        }
+        if ((frame.arch == GuestArch::X64 && frame.x64 == nullptr)
+            || (frame.arch == GuestArch::X86 && frame.x86 == nullptr)) {
+            return false;
+        }
+
+        uint16_t x86Offsets[kMaxParams] = {};
+        if (frame.arch == GuestArch::X86 && !computeStackOffsets(sig, x86Offsets)) {
+            return false;
+        }
+
+        const uint16_t pointerSize = frame.pointerSize();
+        TTD::Replay::IThreadView const* thread = frame.thread;
+
         out.clear();
         out.resize(sig.paramCount);
 
@@ -302,10 +465,15 @@ namespace ttdcapa {
             arg.is_out = p.isOut();
 
             bool ok = false;
-            arg.raw = fetchSlot(ctx, thread, p.slot, p.isFloat(), ok);
+            arg.raw = fetchArg(frame, sig, i, x86Offsets, ok);
             if (!ok) {
                 // Stack slot we couldn't read: leave it zero rather than invent one.
                 arg.raw = 0;
+            }
+            // A 32-bit guest's pointers and handles are 4 bytes; anything above that
+            // in the word we read is not part of the value.
+            if (pointerSize == 4 && isPointerKind(p.kind)) {
+                arg.raw &= 0xFFFFFFFFull;
             }
             if (p.isFloat()) {
                 arg.fval = floatValue(p, arg.raw);
@@ -329,7 +497,7 @@ namespace ttdcapa {
             // [In] contents are already valid here. [In,Out] gets read twice: once
             // now for what the caller passed, then again at the return.
             if (p.isIn()) {
-                dereference(thread, opt, p.kind, arg.raw, p.pointeeSize, byteCount, arg);
+                dereference(thread, opt, p.kind, arg.raw, p.pointeeSize, pointerSize, byteCount, arg);
                 tryUntypedString(thread, arg);
             }
             if (p.isOut() && arg.raw >= kMinDerefAddr) {
@@ -344,12 +512,16 @@ namespace ttdcapa {
                 deferred.push_back(pending);
             }
         }
+        return true;
     }
 
     void resolvePendingOuts(const std::vector<PendingOut>& pending,
-                            TTD::Replay::IThreadView const* thread,
+                            const CallFrame& frame,
                             const DecodeOptions& opt,
                             std::vector<DecodedArg>& args) {
+        const uint16_t pointerSize = frame.pointerSize();
+        TTD::Replay::IThreadView const* thread = frame.thread;
+
         // Scalars first: a buffer's real length is usually itself an [Out] scalar
         // (ReadFile's lpNumberOfBytesRead), so it has to be resolved before the
         // buffer that depends on it.
@@ -359,7 +531,7 @@ namespace ttdcapa {
             }
             DecodedArg& arg = args[po.param_index];
             DecodedArg fresh;
-            dereference(thread, opt, po.kind, po.ptr, po.pointee_size, 0, fresh);
+            dereference(thread, opt, po.kind, po.ptr, po.pointee_size, pointerSize, 0, fresh);
             if (fresh.has_deref || fresh.has_str) {
                 fresh.name = arg.name;
                 fresh.type = arg.type;

@@ -1,7 +1,7 @@
 ﻿<?xml version="1.0" encoding="utf-8"?>
 <Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <ItemGroup>
-    <ClCompile Include="src\abi_x64.cpp">
+    <ClCompile Include="src\abi.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="src\main.cpp">
@@ -21,7 +21,7 @@
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="src\abi_x64.hpp">
+    <ClInclude Include="src\abi.hpp">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="src\ttd_pe_utils.hpp">
