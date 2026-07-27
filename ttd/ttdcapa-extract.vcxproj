@@ -1,4 +1,4 @@
-<?xml version="1.0" encoding="utf-8"?>
+﻿<?xml version="1.0" encoding="utf-8"?>
 <Project DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <ItemGroup Label="ProjectConfigurations">
     <ProjectConfiguration Include="Debug|x64">
@@ -71,6 +71,7 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="src\abi.cpp" />
+    <ClCompile Include="src\binreport.cpp" />
     <ClCompile Include="src\main.cpp" />
     <ClCompile Include="src\ttd_pe_utils.cpp" />
     <ClCompile Include="src\ttdutils.cpp" />
@@ -79,6 +80,7 @@
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="src\abi.hpp" />
+    <ClInclude Include="src\binreport.hpp" />
     <ClInclude Include="src\ttd_pe_utils.hpp" />
     <ClInclude Include="src\ttdutils.hpp" />
     <ClInclude Include="src\utils.hpp" />

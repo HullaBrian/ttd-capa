@@ -32,7 +32,10 @@ namespace ttdcapa {
     struct Options {
         std::filesystem::path trace;
         std::filesystem::path sample;       // optional on-disk sample for hashing
-        std::filesystem::path output;       // empty will output to stdout
+        std::filesystem::path output;       // JSON report; empty means none
+        // Binary report (see binreport.hpp). Much faster to write and effectively free to
+        // load, but only the JSON form is what capa consumes.
+        std::filesystem::path binary_output;
         std::filesystem::path win32_index;  // empty means search the default locations
         std::string dump_sig;               // print one signature and exit; no trace needed
         uint64_t max_calls = 0;             // 0 means unlimited

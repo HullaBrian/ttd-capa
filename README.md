@@ -139,6 +139,29 @@ Useful flags:
   the dominant cost in a report, whereas a buffer truncated below the interesting part is lost
 - `--keep-json` - keep the generated JSON report after the Python script runs
 
+## Binary reports
+`-o <path>` writes the JSON report capa consumes. `-b/--binary <path>` writes the same data in a
+compact, memory-mappable layout instead (see `ttd/src/binreport.hpp`), intended for tools that load
+a whole report and browse it. Either or both can be given.
+
+JSON is a poor fit for that second job. On a 3.4M-call trace, measured:
+
+| | JSON | binary |
+| --- | --- | --- |
+| write (of a 44s run whose sweep is ~30s) | ~56s | ~14s |
+| load back | 16.6s (8.9s parse + 7.6s building objects) | a memory map |
+| size | 654 MB | 585 MB |
+
+The load figure is the important one: 138ms of that 16.6s was disk I/O, so the cost was never the
+bytes, it was parsing text and allocating several million small objects. The binary layout has
+fixed-size call records indexable by row, positions as two integers, raw bytes instead of hex, a
+deduplicated string table (3.4M calls' module and API names fit in 100 KB), and a prebuilt
+lowercased search haystack per call so filtering is a scan over mapped pages.
+
+`--progress` and `--cancel-on-stdin` support a UI driving the extractor as a child process: the
+former emits `[progress] <percent> <calls>` and `[phase] sweep`/`[phase] write` on stderr, the
+latter interrupts the sweep on request and still writes everything recorded up to that point.
+
 ## Manual
 To manually extract capability features without the Python wrapper script:
 

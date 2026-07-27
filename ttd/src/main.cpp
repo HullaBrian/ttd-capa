@@ -44,6 +44,7 @@
 #include "ttd_pe_utils.hpp"
 #include "win32meta.hpp"
 #include "abi.hpp"
+#include "binreport.hpp"
 
 using namespace ttdcapa;
 
@@ -392,7 +393,17 @@ int wmain(int argc, wchar_t** argv) {
         std::fprintf(stderr, "[phase] write\n");
         std::fflush(stderr);
     }
-    writeReport(opt.output);
+    if (!opt.binary_output.empty()) {
+        std::string err;
+        if (binreport::write(opt.binary_output, g_report, err)) {
+            std::cerr << "[+] Wrote binary report " << opt.binary_output.string() << "\n";
+        } else {
+            std::cerr << "[-] " << err << "\n";
+        }
+    }
+    if (!opt.output.empty()) {
+        writeReport(opt.output);
+    }
 
     std::cerr << "[!] Exiting...\n";
     return 0;

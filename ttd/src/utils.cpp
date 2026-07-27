@@ -180,6 +180,9 @@ namespace ttdcapa {
             else if (a == L"--dump-sig" && i + 1 < argc) {
                 opt.dump_sig = convertWstringToString(argv[++i]);
             }
+            else if ((a == L"-b" || a == L"--binary") && i + 1 < argc) {
+                opt.binary_output = argv[++i];
+            }
             else if (a == L"--progress") {
                 opt.report_progress = true;
             }
