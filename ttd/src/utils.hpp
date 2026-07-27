@@ -36,7 +36,12 @@ namespace ttdcapa {
         std::filesystem::path win32_index;  // empty means search the default locations
         std::string dump_sig;               // print one signature and exit; no trace needed
         uint64_t max_calls = 0;             // 0 means unlimited
-        size_t max_buffer = 256;            // bytes kept from any one counted buffer
+        // Bytes kept from any one counted buffer. Generous on purpose: buffer parameters
+        // are well under 1% of the calls in a typical trace -- on a 654 MB report measured
+        // here, 23k buffers across 3.4M calls totalling 1.1 MB -- so the cap is nowhere
+        // near the dominant cost, while a buffer truncated below the interesting part is
+        // simply lost. 64 KiB covers typical socket and file reads whole.
+        size_t max_buffer = 65536;
         bool no_metadata = false;           // force the pre-metadata heuristic capture
         // Only affects calls with no metadata: blindly grab four extra stack slots.
         // Functions we have a signature for always capture their true arity.

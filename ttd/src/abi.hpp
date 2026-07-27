@@ -39,7 +39,7 @@
 namespace ttdcapa {
 
     struct DecodeOptions {
-        size_t max_buffer = 256;   // bytes of any one counted buffer to keep
+        size_t max_buffer = 65536;  // bytes of any one counted buffer to keep
         size_t max_string = 512;   // characters of any one string to keep
     };
 

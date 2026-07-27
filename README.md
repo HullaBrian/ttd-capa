@@ -133,7 +133,10 @@ Useful flags:
   heuristic fallback path
 - `--win32-index <path>` - use a specific `win32-index.bin` instead of the one next to the extractor
 - `--no-metadata` - disable metadata-driven decoding and use the original four-register heuristic everywhere
-- `--max-buffer N` - bytes to keep from any one captured buffer (default 256)
+- `--max-buffer N` - bytes to keep from any one captured buffer (default 65536). Buffers cut short
+  at this limit carry a `bytes_total` field giving their real length. The default is deliberately
+  generous: buffer parameters are well under 1% of the calls in a typical trace, so they are never
+  the dominant cost in a report, whereas a buffer truncated below the interesting part is lost
 - `--keep-json` - keep the generated JSON report after the Python script runs
 
 ## Manual
