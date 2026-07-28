@@ -80,6 +80,31 @@ namespace ttdcapa::binreport {
             return buf;
         }
 
+        // Printable runs from a captured buffer, so that searching for text a program
+        // wrote or read finds the call that carried it. Without this a buffer parameter
+        // contributes only its pointer to the searchable text, which is useless. Bounded
+        // because a 64 KiB buffer has no business inflating every haystack.
+        std::string printableRuns(const std::vector<uint8_t>& bytes, size_t limit = 96) {
+            std::string out;
+            size_t run = 0;
+            for (uint8_t b : bytes) {
+                if (b >= 0x20 && b < 0x7f) {
+                    if (out.size() >= limit) {
+                        break;
+                    }
+                    out.push_back(static_cast<char>(b));
+                    ++run;
+                } else {
+                    // Keep runs separated so two adjacent fields cannot look like one word.
+                    if (run != 0 && !out.empty() && out.back() != ' ') {
+                        out.push_back(' ');
+                    }
+                    run = 0;
+                }
+            }
+            return out;
+        }
+
         // The same text a viewer would search: "module!api" plus each parameter rendered
         // the way it is displayed. Built here so a filter never has to reconstruct it.
         std::string buildHaystack(const CallRecord& call, const std::string& moduleName) {
@@ -114,6 +139,13 @@ namespace ttdcapa::binreport {
                         }
                     } else {
                         out += toHexValue(p.raw);
+                    }
+                    if (!p.bytes.empty()) {
+                        std::string text = printableRuns(p.bytes);
+                        if (!text.empty()) {
+                            out += ' ';
+                            out += text;
+                        }
                     }
                 }
             } else {
