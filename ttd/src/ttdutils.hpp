@@ -92,6 +92,10 @@ namespace ttdcapa {
         bool metadata = false;           // args came from a real signature, not the heuristic
         bool has_ret = false;
         uint64_t ret = 0;
+        // Where the callee will return to, i.e. the instruction after the CALL. Identifies
+        // the call site, which is what tells you who in the sample made the call. The
+        // replay engine hands this to the callback already, so recording it is free.
+        uint64_t return_address = 0;
     };
 
     struct ProcessRecord {

@@ -269,6 +269,7 @@ namespace ttdcapa::binreport {
             calls.u32(searchOff);
             calls.u16(paramCount);
             calls.u16(static_cast<uint16_t>(std::min<size_t>(haystack.size(), 0xFFFF)));
+            calls.u64(call.return_address);
         }
 
         // Assemble: header, then each region in the order the header declares.

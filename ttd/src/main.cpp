@@ -232,6 +232,9 @@ int wmain(int argc, wchar_t** argv) {
                 rec.seq = seq++;
                 rec.module = it->second.module;
                 rec.api = it->second.api;
+                // The callback's fall-through address is the return address; no extra
+                // work to obtain it.
+                rec.return_address = static_cast<uint64_t>(fall_through);
 
                 // Retrieve usable TTD timestamp
                 TTD::Replay::Position pos = thread->GetPosition();

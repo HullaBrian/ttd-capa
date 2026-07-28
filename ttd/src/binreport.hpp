@@ -33,9 +33,11 @@ namespace ttdcapa {
     namespace binreport {
 
         constexpr char kMagic[8] = { 'T', 'T', 'D', 'B', 'E', 'H', 'V', '1' };
-        constexpr uint32_t kVersion = 1;
+        // 2 added returnAddress to the call record. A reader that checks the version will
+        // ask for a re-extract rather than misread the older layout.
+        constexpr uint32_t kVersion = 2;
         constexpr size_t kHeaderSize = 128;
-        constexpr size_t kCallRecordSize = 40;
+        constexpr size_t kCallRecordSize = 48;
 
         enum class Arch : uint32_t {
             X64 = 0,
@@ -97,6 +99,7 @@ namespace ttdcapa {
         //   32: u32  searchOff       (offset into the blob)
         //   36: u16  paramCount      (low 15 bits; kDecodedFlag set when decoded)
         //   38: u16  searchLen
+        //   40: u64  returnAddress   (the instruction after the CALL, i.e. the call site)
         //
         // Parameter record, variable length:
         //   u8  kind

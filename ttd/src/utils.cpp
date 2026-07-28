@@ -308,6 +308,7 @@ namespace ttdcapa {
             }
 
             call["ret"] = callRecord.has_ret ? callRecord.ret : 0;
+            call["return_address"] = callRecord.return_address;
 
             process["calls"].push_back(call);
         }
