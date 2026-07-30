@@ -68,7 +68,7 @@ python tools\build-win32-index.py
 
 # Prerequisites
 - Windows
-- v145 for Microsoft C++ Build Tools
+- Microsoft C++ Build Tools, v143 (VS2022) or newer
 - TTD DLLs (`TTDReplay.dll` and `TTDReplayCPU.dll`)
 - Python 3.10+ (for CAPA)
 
@@ -85,14 +85,16 @@ The build copies `ttd/data/win32-index.bin` next to the executable. If it's miss
 `python tools\build-win32-index.py` to generate it; without it the extractor still runs, but falls back to heuristic
 argument capture for every call.
 
-After the build, ttd-capa cannot run properly without Microsoft's `TTDReplay.dll` and `TTDReplayCPU.dll` being in the same directory as `ttdcapa-extract.exe`. 
-To get those DLLs, ensure you have WinDbg instealled already. Then, run the following PowerShell command to find the DLL location on your system:
+After the build, the extractor needs Microsoft's `TTDReplay.dll` and `TTDReplayCPU.dll` to run.
+Those DLLs ship with WinDbg rather than with this project. Find them with:
 
 ```powershell
 Join-Path (Get-AppxPackage Microsoft.WinDbg).InstallLocation 'amd64\ttd'
 ```
 
-Then, copy `TTDReplay.dll` and `TTDReplayCPU.dll` into the same directory as `ttdcapa-extract.exe`.
+Then either pass `--ttd-dlls <that path>` when running, or copy both DLLs next to
+`ttdcapa-extract.exe`. The flag is the better option if you would rather not copy Microsoft's
+binaries around; see [docs/ttdcapa-extract.md](docs/ttdcapa-extract.md).
 
 # (Temporary) Installing TTD compatible CAPA
 I'm opening a PR to the main CAPA repository, so hopefully CAPA will eventually have native support 
@@ -142,8 +144,8 @@ Useful flags:
 ## Binary reports
 `-o <path>` writes the JSON report capa consumes. `-b/--binary <path>` writes the same data in a
 compact, memory-mappable layout instead, intended for tools that load a whole report and browse it.
-Either or both can be given. The layout is specified in [docs/ttdb-format.md](docs/ttdb-format.md);
-the writer is `ttd/src/binreport.cpp`.
+Either or both can be given. [docs/ttdcapa-extract.md](docs/ttdcapa-extract.md) documents every
+option and specifies the binary layout; the writer is `ttd/src/binreport.cpp`.
 
 JSON is a poor fit for that second job. On a 3.4M-call trace, measured:
 

@@ -42,7 +42,7 @@ jobs:
           New-Item -ItemType Directory -Force dist | Out-Null
           Copy-Item ttd/bin/x64/Release/ttdcapa-extract.exe dist/
           Copy-Item ttd/data/win32-index.bin dist/
-          Copy-Item docs/ttdb-format.md dist/
+          Copy-Item docs/ttdcapa-extract.md dist/
           Get-ChildItem dist | Select-Object Name, Length
 
       - uses: actions/upload-artifact@v4
@@ -63,4 +63,4 @@ jobs:
             - `TTDReplay.dll` and `TTDReplayCPU.dll` are Microsoft's and are not redistributed
               here. Pass `--ttd-dlls <dir>` pointing at WinDbg's `amd64\ttd` folder, or place
               copies beside the executable.
-            - `ttdb-format.md` describes the report layout field by field.
+            - `ttdcapa-extract.md` documents the command line and the `.ttdb` layout.

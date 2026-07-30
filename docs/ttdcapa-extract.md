@@ -1,20 +1,108 @@
-# The `.ttdb` binary report format
+# `ttdcapa-extract`
 
-A `.ttdb` file holds the Windows API calls extracted from a Time Travel Debugging trace:
-for each call, when it happened, which function was called, what its arguments were, and
-what it returned.
+Sweeps a Time Travel Debugging trace and records every Windows API call it made: when it
+happened, which function was called, what its arguments were, and what it returned.
+Arguments are decoded against Microsoft's Win32 API metadata where a signature exists, so
+parameters come back named and typed rather than as four guessed registers.
 
-It is written by `ttdcapa-extract -b out.ttdb` and is designed to be **memory-mapped and
-read in place**. Nothing is parsed on open and nothing is allocated per call, so opening a
-3.4-million-call report costs a header validation rather than the ~17 seconds the
-equivalent JSON took. The reference implementations are `ttd/src/binreport.cpp` (writer)
-and, in the Binary Ninja debugger, `core/ttdbehavior.cpp` (reader).
+It writes either of two things, or both:
+
+- **`-o report.json`** -- the JSON report [capa](https://github.com/mandiant/capa) consumes.
+- **`-b report.ttdb`** -- a compact binary layout meant to be memory-mapped and browsed.
+  On a 3.4M-call trace it takes 3.6s to write against ~56s for the JSON, and loading it is
+  a memory map rather than a 17s parse. The format is specified [below](#the-ttdb-format).
+
+## Usage
+
+```
+ttdcapa-extract <trace.run> [-o <out.json>] [-b <out.ttdb>] [options]
+ttdcapa-extract --dump-sig <ApiName>
+```
+
+### Output
+
+| Option | Effect |
+| --- | --- |
+| `-o`, `--output <path>` | write the JSON report |
+| `-b`, `--binary <path>` | write the binary report |
+| `--sample <path>` | hash this file and record its MD5/SHA1/SHA256 in the report |
+
+Giving neither `-o` nor `-b` sweeps the trace and writes nothing, which is only useful for
+timing.
+
+### Finding the replay engine
+
+| Option | Effect |
+| --- | --- |
+| `--ttd-dlls <dir>` | where `TTDReplay.dll` and `TTDReplayCPU.dll` live |
+
+Those DLLs are Microsoft's, shipped with WinDbg, and are not redistributed with this tool.
+Point at the copy WinDbg already installed -- normally its `amd64	td` folder:
+
+```powershell
+Join-Path (Get-AppxPackage Microsoft.WinDbg).InstallLocation 'amd64	td'
+```
+
+Without the flag the usual DLL search order applies, so copies placed beside the
+executable work too. `TTDReplay.dll` is delay-loaded, which is what lets the location be
+chosen at runtime; a missing engine is reported rather than crashing the process.
+
+### Argument decoding
+
+| Option | Effect |
+| --- | --- |
+| `--win32-index <path>` | use a specific `win32-index.bin` instead of the one beside the executable |
+| `--no-metadata` | ignore the metadata entirely and use the register/stack heuristic everywhere |
+| `--with-stack-args` | for calls with *no* signature, also grab four stack slots past the register arguments. Calls that have a signature always capture their true arity regardless |
+| `--max-buffer N` | bytes to keep from any one captured buffer (default 65536). Buffers cut short at this limit carry their real length, so a consumer can tell a short buffer from a truncated one |
+| `--max-calls N` | stop recording after N calls (default 0, unlimited). The sweep still runs to the end |
+| `--dump-sig <ApiName>` | print one function's decoded signature and exit. Needs only the metadata index, not a trace or the replay DLLs, which makes it a good smoke test |
+
+### Driving it from another program
+
+| Option | Effect |
+| --- | --- |
+| `--progress` | emit progress on stderr |
+| `--cancel-on-stdin` | stop the sweep when a line reading `cancel` arrives on stdin |
+
+`--progress` writes `[phase] sweep` and `[phase] write` markers and, during the sweep,
+`[progress] <percent> <calls>` a few times a second. The phases matter because the sweep is
+only part of the wall clock: on a 3.4M-call trace it takes about 30s while serialising the
+report takes comparable time, so a caller tracking only the sweep would sit at 100% looking
+wedged. Percentages are clamped to be non-decreasing, since positions read from different
+threads are not perfectly ordered.
+
+`--cancel-on-stdin` interrupts the replay and then writes the report as usual: everything
+recorded up to that point is kept, so a cancelled run yields a complete, valid report of a
+shorter prefix of the trace.
+
+## Notes on what the data can and cannot tell you
+
+**A missing string argument is not evidence the argument was null.** The sweep reads guest
+memory through the `IThreadView` the replay engine hands to a callback, and the SDK fixes
+those reads to `QueryMemoryPolicy::ThreadLocal` -- a fast lookup explicitly allowed to
+ignore memory observed by other threads or by this thread at another time. It returns
+nothing for roughly a quarter of string parameters even though the data is in the trace;
+reading the same address at the same position through a cursor returns the whole string.
+The parameter's raw pointer value is still recorded, and is usually valid.
+
+**Calls without a signature have guessed arguments.** Coverage is the public Windows SDK,
+so `ntdll` internals and CRT helpers fall back to capturing argument registers (x64) or
+stack slots (x86). Their values are positional, unnamed, and the count is a guess. The
+binary format flags these per call.
+
+## The `.ttdb` format
+
+Designed to be **memory-mapped and read in place**: nothing is parsed on open and nothing
+is allocated per call, so opening a 3.4-million-call report costs a header validation. The
+reference implementations are `ttd/src/binreport.cpp` (writer) and, in the Binary Ninja
+debugger, `core/ttdbehavior.cpp` (reader).
 
 Format version 2. All integers are **little-endian**. All *file offsets* are byte offsets
 from the start of the file, so a mapped view needs no fixups; *region offsets* (into the
 string table or the blob) are relative to that region's start, and are noted as such.
 
-## Layout
+### Layout
 
 ```
 +----------------------------+ 0
@@ -36,7 +124,7 @@ where the compression really comes from -- a trace has millions of calls but onl
 of distinct module and function names, so every name in a 3.4M-call report fits in about
 100 KB. Everything variable-length and unique to one call goes in the blob.
 
-## Header (128 bytes)
+### Header (128 bytes)
 
 | Offset | Type | Field | Notes |
 | ---: | --- | --- | --- |
@@ -63,7 +151,7 @@ of distinct module and function names, so every name in a 3.4M-call report fits 
 machine that recorded the trace. A reader should reject a file whose magic does not match,
 whose version it does not know, or whose regions do not fit inside the file.
 
-## Call record (48 bytes)
+### Call record (48 bytes)
 
 | Offset | Type | Field | Notes |
 | ---: | --- | --- | --- |
@@ -95,7 +183,7 @@ correct arity, names, and types. When clear, it fell back to capturing argument 
 is a guess. A decoded call may legitimately have zero parameters, which is why the flag is
 separate from the count.
 
-## Parameter record (variable length)
+### Parameter record (variable length)
 
 Parameters for one call are stored consecutively starting at `paramsOff + paramOff`, and
 are decoded in sequence -- there is no index, so reading parameter *k* means walking the
@@ -162,7 +250,7 @@ its C type, which is in `typeStr`.
 | 17 | `str*` | `char**`, an out-parameter receiving an allocated string |
 | 18 | `wstr*` | `wchar_t**` |
 
-## String table
+### String table
 
 A run of NUL-terminated UTF-8 strings, deduplicated. A string-table offset is relative to
 `stringsOff`. **Offset 0 is the empty string**, so 0 doubles as "absent".
@@ -170,7 +258,7 @@ A run of NUL-terminated UTF-8 strings, deduplicated. A string-table offset is re
 Only repeated text lives here: module names, function names, parameter names, parameter
 type names.
 
-## Blob
+### Blob
 
 Raw bytes, referenced by `(offset, length)` pairs relative to `blobOff`. It holds three
 things, interleaved in whatever order the writer emitted them:
@@ -182,7 +270,7 @@ things, interleaved in whatever order the writer emitted them:
 - **Parameter strings**, referenced by HasStr.
 - **Captured buffer contents**, referenced by HasBytes. Raw bytes, not hex.
 
-## Reading a report
+### Reading a report
 
 Validate the magic and version, check the regions fit in the file, and map it. Then:
 
@@ -196,11 +284,3 @@ Validate the magic and version, check the regions fit in the file, and map it. T
   string table once to a set of offsets, then compare `moduleStr`/`apiStr` as integers --
   that is far cheaper than a string search, which is why scoped queries are faster than
   plain text ones.
-
-## A caveat about missing data
-
-A string parameter whose HasStr bit is clear does **not** mean the argument was null. The
-extractor's sweep reads guest memory through an interface the TTD SDK restricts to a fast,
-incomplete lookup, which may return nothing even when the data is present in the trace;
-roughly a quarter of string parameters are affected. The parameter's raw `value` is still
-recorded and is usually a valid pointer. See the Limitations section of the README.
