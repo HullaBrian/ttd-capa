@@ -141,8 +141,9 @@ Useful flags:
 
 ## Binary reports
 `-o <path>` writes the JSON report capa consumes. `-b/--binary <path>` writes the same data in a
-compact, memory-mappable layout instead (see `ttd/src/binreport.hpp`), intended for tools that load
-a whole report and browse it. Either or both can be given.
+compact, memory-mappable layout instead, intended for tools that load a whole report and browse it.
+Either or both can be given. The layout is specified in [docs/ttdb-format.md](docs/ttdb-format.md);
+the writer is `ttd/src/binreport.cpp`.
 
 JSON is a poor fit for that second job. On a 3.4M-call trace, measured:
 
@@ -205,6 +206,25 @@ python ttd-timeline.py <JSON REPORT PATH> --calls
 ```
 
 # Limitations
+- **String and buffer arguments are missing from some calls, and this is expected.** The sweep
+  reads guest memory through the `IThreadView` the replay engine hands to a callback, and the SDK
+  fixes those reads to `QueryMemoryPolicy::ThreadLocal` -- "a quick query that concentrates on the
+  current position and current thread, possibly ignoring some of the memory observed by other
+  threads, along with memory observed by the current thread in the past or future". It is allowed
+  to return nothing even when the data is in the trace, and it does: about a quarter of string
+  parameters come back empty, and `LoadLibraryExW`'s path was missing on 39% of its calls in one
+  trace. Reading the same address at the same position through a *cursor* returns the whole
+  string, so this is a property of which interface the read goes through, not of the trace.
+
+  A missing string is therefore never evidence that the argument was null -- the parameter's raw
+  pointer value is still recorded, and is usually valid. The policy cannot be changed for a
+  thread view; `SetDefaultMemoryPolicy` on the cursor has no effect on it (measured:
+  byte-identical output).
+
+  Recovering them means going back over the failed addresses with a cursor afterwards, which
+  works -- about 77% come back -- but costs roughly 4x the total extraction time on a large
+  trace, because every seek replays from a keyframe. That is a large enough trade to want its
+  own discussion, so it is not in the extractor today.
 - x64 and x86 traces are supported, including WoW64; ARM64 is not. Bitness is decided per call
   from the PE header of the module owning the call target rather than once per trace -- a WoW64
   process runs both widths at once, and `SystemInfo.ProcessorArchitecture` describes the machine
