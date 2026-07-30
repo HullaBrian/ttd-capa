@@ -37,6 +37,12 @@ namespace ttdcapa {
         // load, but only the JSON form is what capa consumes.
         std::filesystem::path binary_output;
         std::filesystem::path win32_index;  // empty means search the default locations
+        // Directory holding TTDReplay.dll and TTDReplayCPU.dll -- normally WinDbg's
+        // amd64	td folder. Those are Microsoft's and not ours to redistribute, so
+        // rather than requiring them beside the executable, a caller points at wherever
+        // WinDbg already put them. TTDReplay.dll is delay-loaded so this can take effect
+        // at runtime; without the flag the usual DLL search order applies.
+        std::filesystem::path ttd_dlls;
         std::string dump_sig;               // print one signature and exit; no trace needed
         uint64_t max_calls = 0;             // 0 means unlimited
         // Bytes kept from any one counted buffer. Generous on purpose: buffer parameters

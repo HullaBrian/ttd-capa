@@ -94,10 +94,15 @@ static int dumpSignature(const std::string& api) {
 int wmain(int argc, wchar_t** argv) {
     Options opt;
     if (!parse_args(argc, argv, opt)) {
-        std::cerr << "Usage: ttdcapa-extract <trace.run> [--sample <sample.exe>] [-o <out.json>]\n"
-                     "                       [--max-calls N] [--with-stack-args]\n"
+        std::cerr << "Usage: ttdcapa-extract <trace.run> [-o <out.json>] [-b <out.ttdb>]\n"
+                     "                       [--sample <sample.exe>] [--max-calls N] [--with-stack-args]\n"
                      "                       [--win32-index <path>] [--no-metadata] [--max-buffer N]\n"
-                     "       ttdcapa-extract --dump-sig <ApiName>\n";
+                     "                       [--ttd-dlls <dir>] [--progress] [--cancel-on-stdin]\n"
+                     "       ttdcapa-extract --dump-sig <ApiName>\n"
+                     "\n"
+                     "  --ttd-dlls <dir>  where TTDReplay.dll and TTDReplayCPU.dll live, normally\n"
+                     "                    WinDbg's amd64\\\\ttd folder. Defaults to the usual DLL\n"
+                     "                    search order, which finds copies beside this executable.\n";
         return 1;
     }
 
@@ -115,6 +120,32 @@ int wmain(int argc, wchar_t** argv) {
 
     if (!opt.dump_sig.empty()) {
         return dumpSignature(opt.dump_sig);
+    }
+
+    // Locate the replay engine before anything touches the TTD API. TTDReplay.dll is
+    // delay-loaded, so if --ttd-dlls was given we can pre-load it from there; otherwise
+    // the delay-load resolver falls back to the normal search order, which finds a copy
+    // sitting next to this executable exactly as before.
+    //
+    // The directory goes on the search path as well as the one module being pre-loaded,
+    // because TTDReplay.dll pulls in TTDReplayCPU.dll itself.
+    // Loaded explicitly either way so a missing engine is a clear message rather than
+    // the structured exception a failed delay-load would otherwise raise.
+    {
+        std::wstring replay = L"TTDReplay.dll";
+        if (!opt.ttd_dlls.empty()) {
+            ::SetDllDirectoryW(opt.ttd_dlls.c_str());
+            replay = (opt.ttd_dlls / L"TTDReplay.dll").native();
+        }
+        if (::LoadLibraryW(replay.c_str()) == nullptr) {
+            DWORD err = ::GetLastError();
+            std::wcerr << L"[-] Cannot load " << replay << L" (error " << err << L")\n";
+            if (opt.ttd_dlls.empty()) {
+                std::cerr << "[-] Pass --ttd-dlls <dir> pointing at WinDbg's amd64\\ttd folder, or\n"
+                             "    put TTDReplay.dll and TTDReplayCPU.dll next to this executable.\n";
+            }
+            return 4;
+        }
     }
 
     auto [engine, hr] = TTD::Replay::MakeReplayEngine();

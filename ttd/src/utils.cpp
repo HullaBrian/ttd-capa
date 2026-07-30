@@ -168,6 +168,9 @@ namespace ttdcapa {
             else if (a == L"--with-stack-args") {
                 opt.with_stack_args = true;
             }
+            else if (a == L"--ttd-dlls" && i + 1 < argc) {
+                opt.ttd_dlls = argv[++i];
+            }
             else if (a == L"--win32-index" && i + 1 < argc) {
                 opt.win32_index = argv[++i];
             }
