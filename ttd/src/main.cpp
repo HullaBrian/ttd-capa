@@ -157,6 +157,7 @@ int wmain(int argc, wchar_t** argv) {
     // Ensure TTD engine is initialized before doing any actual work
     if (!initializeTTDEngine(engine, opt.trace) || engine == NULL) {
         std::wcerr << "[-] Exiting...\n";
+        return 5;
     }
 
     // Begin building report

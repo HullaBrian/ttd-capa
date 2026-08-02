@@ -86,7 +86,22 @@ namespace ttdcapa {
 
         if (engine->GetIndexStatus() != TTD::Replay::IndexStatus::IndexFileLoaded) {
             std::cerr << "[+] Building index (first run may be slow)...\n";
-            engine->BuildIndex(nullptr, nullptr, TTD::Replay::IndexBuildFlags::None);
+
+            auto reportProgress = [](void const* ctx, TTD::Replay::IndexBuildProgressType const* progress) noexcept -> void {
+                if (progress != nullptr && progress->KeyframeCount > 0) {
+                    uint32_t pct = progress->KeyframesProcessed * 100 / progress->KeyframeCount;
+                    std::cerr << "\r[+] Building index... " << pct << "%   ";
+                }
+            };
+
+            TTD::Replay::IndexStatus status =
+                engine->BuildIndex(reportProgress, nullptr, TTD::Replay::IndexBuildFlags::None);
+            std::cerr << "\n";
+
+            if (status == TTD::Replay::IndexStatus::IndexFileNotPresent) {
+                std::cerr << "[-] Failed to build trace index\n";
+                return false;
+            }
         }
 
         std::cerr << "[+] Initialized TTD engine\n";

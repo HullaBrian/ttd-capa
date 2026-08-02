@@ -40,3 +40,5 @@ capa-9.4.0/.venv/
 !tests/sample.ttd.json
 *.dll
 /ttd/bin
+/.vs
+/ttd/obj
