@@ -41,21 +41,76 @@ std::string readCSTR(TTD::Replay::UniqueCursor* cursor, TTD::GuestAddress addr, 
     return s;
 }
 
-// Locate the NT headers for the image at `base`. Returns the file-relative offset
-// of the NT headers (e_lfanew) and validates the PE/PE32+ signatures.
-bool readNTHeaders(TTD::Replay::UniqueCursor* cursor, TTD::GuestAddress moduleBaseAddress, IMAGE_NT_HEADERS64& nt) {
+// The signature and IMAGE_FILE_HEADER that precede the optional header are identical
+// in PE32 and PE32+, so the offset of the optional header is the same in both.
+constexpr uint32_t kOptionalHeaderOffset = offsetof(IMAGE_NT_HEADERS64, OptionalHeader);
+static_assert(kOptionalHeaderOffset == offsetof(IMAGE_NT_HEADERS32, OptionalHeader),
+              "PE32 and PE32+ must agree on where the optional header starts");
+
+// Just the parts of an image's headers the parsers below need, read in a way that
+// works for both PE32 and PE32+.
+struct PeHeaders {
+    bool is64 = false;
+    uint32_t ntOffset = 0;  // e_lfanew
+    uint16_t numberOfSections = 0;
+    uint16_t sizeOfOptionalHeader = 0;
+    IMAGE_DATA_DIRECTORY dataDir[IMAGE_NUMBEROF_DIRECTORY_ENTRIES] {};
+
+    // Width of a thunk/pointer in this image.
+    uint32_t pointerSize() const { return is64 ? 8u : 4u; }
+
+    // The section table follows the optional header, whose size varies by format.
+    uint32_t sectionTableOffset() const { return ntOffset + kOptionalHeaderOffset + sizeOfOptionalHeader; }
+};
+
+// Locate and validate the headers of the image at `base`, for either PE format.
+bool readNTHeaders(TTD::Replay::UniqueCursor* cursor, TTD::GuestAddress moduleBaseAddress, PeHeaders& pe) {
     IMAGE_DOS_HEADER dos{};
     if (!readMemory(cursor, moduleBaseAddress, &dos, sizeof(dos)) || dos.e_magic != IMAGE_DOS_SIGNATURE) {
         return false;
     }
-    if (!readMemory(cursor, moduleBaseAddress + static_cast<uint32_t>(dos.e_lfanew), &nt, sizeof(nt))) {
+    pe.ntOffset = static_cast<uint32_t>(dos.e_lfanew);
+
+    struct {
+        uint32_t Signature;
+        IMAGE_FILE_HEADER FileHeader;
+    } head {};
+    if (!readMemory(cursor, moduleBaseAddress + pe.ntOffset, &head, sizeof(head))) {
         return false;
     }
-    if (nt.Signature != IMAGE_NT_SIGNATURE ||
-        nt.OptionalHeader.Magic != IMAGE_NT_OPTIONAL_HDR64_MAGIC) {
+    if (head.Signature != IMAGE_NT_SIGNATURE) {
         return false;
     }
-    return true;
+    pe.numberOfSections = head.FileHeader.NumberOfSections;
+    pe.sizeOfOptionalHeader = head.FileHeader.SizeOfOptionalHeader;
+
+    // The magic decides which optional header layout follows, and with it the image's
+    // bitness -- the one thing about a module we cannot get from the TTD module list.
+    TTD::GuestAddress optAddr = moduleBaseAddress + pe.ntOffset + kOptionalHeaderOffset;
+    uint16_t magic = 0;
+    if (!readMemory(cursor, optAddr, &magic, sizeof(magic))) {
+        return false;
+    }
+
+    if (magic == IMAGE_NT_OPTIONAL_HDR64_MAGIC) {
+        IMAGE_OPTIONAL_HEADER64 opt{};
+        if (!readMemory(cursor, optAddr, &opt, sizeof(opt))) {
+            return false;
+        }
+        pe.is64 = true;
+        std::memcpy(pe.dataDir, opt.DataDirectory, sizeof(pe.dataDir));
+        return true;
+    }
+    if (magic == IMAGE_NT_OPTIONAL_HDR32_MAGIC) {
+        IMAGE_OPTIONAL_HEADER32 opt{};
+        if (!readMemory(cursor, optAddr, &opt, sizeof(opt))) {
+            return false;
+        }
+        pe.is64 = false;
+        std::memcpy(pe.dataDir, opt.DataDirectory, sizeof(pe.dataDir));
+        return true;
+    }
+    return false;
 }
 
 bool isPrintableASCII(unsigned char c) {
@@ -82,13 +137,17 @@ std::string getModuleBaseName(const std::wstring& full) {
     return out;
 }
 
-bool getModuleExports(TTD::Replay::UniqueCursor* cursor, TTD::GuestAddress moduleBaseAddress, std::vector<std::pair<uint64_t, std::string>>& out) {
-    IMAGE_NT_HEADERS64 nt{};
-    if (!readNTHeaders(cursor, moduleBaseAddress, nt)) {
+bool getModuleExports(TTD::Replay::UniqueCursor* cursor, TTD::GuestAddress moduleBaseAddress,
+                      std::vector<std::pair<uint64_t, std::string>>& out, bool* is64Bit) {
+    PeHeaders pe{};
+    if (!readNTHeaders(cursor, moduleBaseAddress, pe)) {
         return false;
     }
+    if (is64Bit != nullptr) {
+        *is64Bit = pe.is64;
+    }
 
-    const IMAGE_DATA_DIRECTORY& dir = nt.OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_EXPORT];
+    const IMAGE_DATA_DIRECTORY& dir = pe.dataDir[IMAGE_DIRECTORY_ENTRY_EXPORT];
     if (dir.VirtualAddress == 0 || dir.Size == 0) {
         return true;  // valid PE, just no exports
     }
@@ -144,13 +203,13 @@ bool getModuleExports(TTD::Replay::UniqueCursor* cursor, TTD::GuestAddress modul
 }
 
 bool getModuleImports(TTD::Replay::UniqueCursor* cursor, TTD::GuestAddress moduleBaseAddress, std::vector<ImportRecord>& out) {
-    IMAGE_NT_HEADERS64 nt{};
+    PeHeaders pe{};
 
-    if (!readNTHeaders(cursor, moduleBaseAddress, nt)) {
+    if (!readNTHeaders(cursor, moduleBaseAddress, pe)) {
         return false;
     }
 
-    const IMAGE_DATA_DIRECTORY& dir = nt.OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT];
+    const IMAGE_DATA_DIRECTORY& dir = pe.dataDir[IMAGE_DIRECTORY_ENTRY_IMPORT];
     if (dir.VirtualAddress == 0 || dir.Size == 0) {
         return true;
     }
@@ -176,15 +235,19 @@ bool getModuleImports(TTD::Replay::UniqueCursor* cursor, TTD::GuestAddress modul
             continue;
         }
 
+        // Thunks are pointer-sized, so a PE32 image's import tables are half as wide.
+        const uint32_t thunkSize = pe.pointerSize();
+        const uint64_t ordinalFlag = pe.is64 ? IMAGE_ORDINAL_FLAG64 : IMAGE_ORDINAL_FLAG32;
+
         for (uint32_t t = 0;; ++t) {
             uint64_t thunk = 0;
-            if (!readMemory(cursor, moduleBaseAddress + int_rva + t * sizeof(uint64_t), &thunk, sizeof(thunk)) || thunk == 0) {
+            if (!readMemory(cursor, moduleBaseAddress + int_rva + t * thunkSize, &thunk, thunkSize) || thunk == 0) {
                 break;
             }
 
-            TTD::GuestAddress slot_va = moduleBaseAddress + iat_rva + t * sizeof(uint64_t);
+            TTD::GuestAddress slot_va = moduleBaseAddress + iat_rva + t * thunkSize;
 
-            if (thunk & IMAGE_ORDINAL_FLAG64) {
+            if (thunk & ordinalFlag) {
                 // import by ordinal: no name to match against; record a synthetic name
                 ImportRecord rec;
                 rec.dll = dll;
@@ -208,20 +271,15 @@ bool getModuleImports(TTD::Replay::UniqueCursor* cursor, TTD::GuestAddress modul
 }
 
 bool getModuleSections(TTD::Replay::UniqueCursor* cursor, TTD::GuestAddress moduleBaseAddress, std::vector<SectionRecord>& out) {
-    IMAGE_NT_HEADERS64 nt{};
+    PeHeaders pe{};
 
-    if (!readNTHeaders(cursor, moduleBaseAddress, nt)) {
+    if (!readNTHeaders(cursor, moduleBaseAddress, pe)) {
         return false;
     }
 
-    IMAGE_DOS_HEADER dos{};
-    if (!readMemory(cursor, moduleBaseAddress, &dos, sizeof(dos))) {
-        return false;
-    }
-    // section headers follow the optional header
-    TTD::GuestAddress sect_va = moduleBaseAddress + dos.e_lfanew + offsetof(IMAGE_NT_HEADERS64, OptionalHeader) + nt.FileHeader.SizeOfOptionalHeader;
+    TTD::GuestAddress sect_va = moduleBaseAddress + pe.sectionTableOffset();
 
-    for (uint16_t i = 0; i < nt.FileHeader.NumberOfSections; ++i) {
+    for (uint16_t i = 0; i < pe.numberOfSections; ++i) {
         IMAGE_SECTION_HEADER sh{};
 
         if (!readMemory(cursor, sect_va + i * sizeof(IMAGE_SECTION_HEADER), &sh, sizeof(sh))) {
@@ -239,20 +297,15 @@ bool getModuleSections(TTD::Replay::UniqueCursor* cursor, TTD::GuestAddress modu
 }
 
 bool getModuleStrings(TTD::Replay::UniqueCursor* cursor, TTD::GuestAddress moduleBaseAddress, std::vector<std::string>& out, size_t minLength, size_t maxStrings) {
-    IMAGE_NT_HEADERS64 nt{};
+    PeHeaders pe{};
 
-    if (!readNTHeaders(cursor, moduleBaseAddress, nt)) {
+    if (!readNTHeaders(cursor, moduleBaseAddress, pe)) {
         return false;
     }
 
-    IMAGE_DOS_HEADER dos{};
-    if (!readMemory(cursor, moduleBaseAddress, &dos, sizeof(dos))) {
-        return false;
-    }
+    TTD::GuestAddress sect_va = moduleBaseAddress + pe.sectionTableOffset();
 
-    TTD::GuestAddress sect_va = moduleBaseAddress + dos.e_lfanew + offsetof(IMAGE_NT_HEADERS64, OptionalHeader) + nt.FileHeader.SizeOfOptionalHeader;
-
-    for (uint16_t i = 0; i < nt.FileHeader.NumberOfSections && out.size() < maxStrings; ++i) {
+    for (uint16_t i = 0; i < pe.numberOfSections && out.size() < maxStrings; ++i) {
         IMAGE_SECTION_HEADER sh{};
         if (!readMemory(cursor, sect_va + i * sizeof(IMAGE_SECTION_HEADER), &sh, sizeof(sh))) {
             break;

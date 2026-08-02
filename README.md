@@ -30,26 +30,71 @@ the entire trace. Every time a call occurs, ttd-capa checks if the call target i
 with the associate module, function name, parameters, and return value. Additionally, ttd-capa automatically attempts to resolve function parameters as strings, 
 which has the potential to significantly increase quick wins during malware analysis.
 
+## Metadata-driven parameter decoding
+Knowing an API's name is not the same as knowing its signature. Without one, all an extractor can do is grab the four
+x64 argument registers and guess at each value - so `CloseHandle(hObject)` gets recorded with four arguments, three of
+which are whatever the caller happened to leave in RDX/R8/R9, and any integer that happens to point at printable bytes
+gets mistaken for a string.
+
+ttd-capa fixes that with Microsoft's own Win32 API metadata, vendored as the [win32json](https://github.com/marlersoft/win32json)
+submodule. `tools/build-win32-index.py` flattens those ~300 JSON files into a compact binary index
+(`ttd/data/win32-index.bin`, ~2.7 MB) keyed by export name, which the extractor memory-maps at startup. For every call
+whose export is in the index, ttd-capa now knows:
+
+- **the real parameter count**, so exactly that many arguments are captured - including the ones past RCX/RDX/R8/R9
+  (`CreateProcessW` has ten) and none of the register residue that used to masquerade as arguments
+- **each parameter's type**, so `PSTR` is decoded as ANSI and `PWSTR` as UTF-16 rather than by trial, and values typed
+  as `HANDLE`, enums, or plain integers are never dereferenced at all
+- **direction** - `[Out]` parameters are re-read at the call's *return* position, so `lpNumberOfBytesRead` and friends
+  are rendered filled in. This is something a live debugger can't easily do, and it's where a time-travel trace earns
+  its keep
+- **buffer lengths**, from `MemorySize(BytesParamIndex)` and array count parameters, so `InternetReadFile`'s `lpBuffer`
+  can be captured at its true length once the callee has written it
+- **enum and flag tables**, so `dwCreationDisposition=3` renders as `CREATE_ALWAYS`
+
+The decoded view lands in a new `params` array on each call in the report. The `args` array capa matches against keeps
+its original shape - it just has the correct arity now, plus any strings recovered from `[Out]` parameters. Symbolic
+flag names are deliberately *not* pushed into `args`, since existing rules match flags numerically.
+
+Coverage is the public Windows SDK, which is what the metadata documents: roughly the top 15% of calls in a typical
+trace by volume, but the great majority of the *interesting* ones. Calls with no signature - `ntdll` internals, CRT
+helpers like `memset` - fall back to the original four-register heuristic unchanged.
+
+To regenerate the index (only needed after bumping the `win32json` submodule):
+
+```powershell
+python tools\build-win32-index.py
+```
+
 # Prerequisites
 - Windows
-- v145 for Microsoft C++ Build Tools
+- Microsoft C++ Build Tools, v143 (VS2022) or newer
 - TTD DLLs (`TTDReplay.dll` and `TTDReplayCPU.dll`)
 - Python 3.10+ (for CAPA)
 
 # Building ttd-capa
+Clone with submodules (`git clone --recursive`, or `git submodule update --init` in an existing clone) - the
+`win32json` submodule supplies the API metadata.
+
 1. Open `ttd/ttdcapa-extract.sln` in Visual Studio
 2. Ensure that the required nuget packages (`Microsoft.TimeTravelDebugging.Apis` and `nlohmann.json`) are installed
 3. Set the build mode to `x64` and `Release`
 4. Navigate to `Build > Build Solution` in order to begin the build
 
-After the build, ttd-capa cannot run properly without Microsoft's `TTDReplay.dll` and `TTDReplayCPU.dll` being in the same directory as `ttdcapa-extract.exe`. 
-To get those DLLs, ensure you have WinDbg instealled already. Then, run the following PowerShell command to find the DLL location on your system:
+The build copies `ttd/data/win32-index.bin` next to the executable. If it's missing, run
+`python tools\build-win32-index.py` to generate it; without it the extractor still runs, but falls back to heuristic
+argument capture for every call.
+
+After the build, the extractor needs Microsoft's `TTDReplay.dll` and `TTDReplayCPU.dll` to run.
+Those DLLs ship with WinDbg rather than with this project. Find them with:
 
 ```powershell
 Join-Path (Get-AppxPackage Microsoft.WinDbg).InstallLocation 'amd64\ttd'
 ```
 
-Then, copy `TTDReplay.dll` and `TTDReplayCPU.dll` into the same directory as `ttdcapa-extract.exe`.
+Then either pass `--ttd-dlls <that path>` when running, or copy both DLLs next to
+`ttdcapa-extract.exe`. The flag is the better option if you would rather not copy Microsoft's
+binaries around; see [docs/ttdcapa-extract.md](docs/ttdcapa-extract.md).
 
 # (Temporary) Installing TTD compatible CAPA
 I'm opening a PR to the main CAPA repository, so hopefully CAPA will eventually have native support 
@@ -85,8 +130,43 @@ python ttd-capa.py <trace.run> <rules-dir> --sample sample.exe -- -vv
 Useful flags:
 - `--extractor <path>` - specify a path to the ttd-capa extractor executable
 - `--max-calls N` - cap huge traces to certain number of calls
-- `--with-stack-args` - captures parameters for function calls that are on the stack (capture more than 5+ parameters for function calls)
+- `--with-stack-args` - for calls with *no* Win32 metadata, also grab four stack slots past the register arguments.
+  Calls we have a signature for always capture their true arity, stack parameters included, so this only affects the
+  heuristic fallback path
+- `--win32-index <path>` - use a specific `win32-index.bin` instead of the one next to the extractor
+- `--no-metadata` - disable metadata-driven decoding and use the original four-register heuristic everywhere
+- `--max-buffer N` - bytes to keep from any one captured buffer (default 65536). Buffers cut short
+  at this limit carry a `bytes_total` field giving their real length. The default is deliberately
+  generous: buffer parameters are well under 1% of the calls in a typical trace, so they are never
+  the dominant cost in a report, whereas a buffer truncated below the interesting part is lost
 - `--keep-json` - keep the generated JSON report after the Python script runs
+
+## Binary reports
+`-o <path>` writes the JSON report capa consumes. `-b/--binary <path>` writes the same data in a
+compact, memory-mappable layout instead, intended for tools that load a whole report and browse it.
+Either or both can be given. [docs/ttdcapa-extract.md](docs/ttdcapa-extract.md) documents every
+option and specifies the binary layout; the writer is `ttd/src/binreport.cpp`.
+
+JSON is a poor fit for that second job. On a 3.4M-call trace, measured:
+
+| | JSON | binary |
+| --- | --- | --- |
+| write | ~56s | **3.6s** |
+| load back | 16.6s (8.9s parse + 7.6s building objects) | a memory map |
+| size | 654 MB | 585 MB |
+
+End to end, extracting and then viewing that trace went from ~103s to ~34s, of which the sweep
+itself is ~30s. The format went from two thirds of the wall clock to a tenth of it.
+
+The load figure is the important one: 138ms of that 16.6s was disk I/O, so the cost was never the
+bytes, it was parsing text and allocating several million small objects. The binary layout has
+fixed-size call records indexable by row, positions as two integers, raw bytes instead of hex, a
+deduplicated string table (3.4M calls' module and API names fit in 100 KB), and a prebuilt
+lowercased search haystack per call so filtering is a scan over mapped pages.
+
+`--progress` and `--cancel-on-stdin` support a UI driving the extractor as a child process: the
+former emits `[progress] <percent> <calls>` and `[phase] sweep`/`[phase] write` on stderr, the
+latter interrupts the sweep on request and still writes everything recorded up to that point.
 
 ## Manual
 To manually extract capability features without the Python wrapper script:
@@ -128,9 +208,48 @@ python ttd-timeline.py <JSON REPORT PATH> --calls
 ```
 
 # Limitations
-- Only x64 traces are supported at the moment (no x86 or ARM)
-- Argument captures are heuristic, so errors may occur
+- **String and buffer arguments are missing from some calls, and this is expected.** The sweep
+  reads guest memory through the `IThreadView` the replay engine hands to a callback, and the SDK
+  fixes those reads to `QueryMemoryPolicy::ThreadLocal` -- "a quick query that concentrates on the
+  current position and current thread, possibly ignoring some of the memory observed by other
+  threads, along with memory observed by the current thread in the past or future". It is allowed
+  to return nothing even when the data is in the trace, and it does: about a quarter of string
+  parameters come back empty, and `LoadLibraryExW`'s path was missing on 39% of its calls in one
+  trace. Reading the same address at the same position through a *cursor* returns the whole
+  string, so this is a property of which interface the read goes through, not of the trace.
+
+  A missing string is therefore never evidence that the argument was null -- the parameter's raw
+  pointer value is still recorded, and is usually valid. The policy cannot be changed for a
+  thread view; `SetDefaultMemoryPolicy` on the cursor has no effect on it (measured:
+  byte-identical output).
+
+  Recovering them means going back over the failed addresses with a cursor afterwards, which
+  works -- about 77% come back -- but costs roughly 4x the total extraction time on a large
+  trace, because every seek replays from a keyframe. That is a large enough trade to want its
+  own discussion, so it is not in the extractor today.
+- x64 and x86 traces are supported, including WoW64; ARM64 is not. Bitness is decided per call
+  from the PE header of the module owning the call target rather than once per trace -- a WoW64
+  process runs both widths at once, and `SystemInfo.ProcessorArchitecture` describes the machine
+  that did the recording, not the process that was recorded
+- On x86, a parameter whose stack footprint cannot be derived from the index makes the whole
+  signature undecodable, and the call falls back to the heuristic capture. This affects any API
+  taking a pointer-sized scalar (`SIZE_T`, `WPARAM`, `LPARAM` and the other typedefs over
+  `UIntPtr`): the index records the x64 width of 8, and an 8 is ambiguous between a genuine
+  64-bit type, which pushes 8 bytes on x86 too, and a pointer-sized one, which pushes 4.
+  Guessing would silently shift every later parameter. Roughly a fifth of commonly-seen APIs are
+  affected, `VirtualAlloc` and `HeapAlloc` among them; `--dump-sig` marks them `[no x86 layout]`.
+  Fixing it means having `build-win32-index.py` emit the x86 footprint alongside the x64 one --
+  there is a spare pad byte in the parameter record for exactly that
+- Aggregates passed by value are declined on x86 for the same reason: the x64 ABI passes them by
+  hidden pointer, so the index records a pointer where x86 pushes the whole struct
 - Only the functions directly exported by loaded modules are logged in the JSON report
+- Argument decoding is exact only for APIs covered by the Win32 metadata (public SDK surface). `ntdll` internals,
+  undocumented APIs, and CRT helpers fall back to the four-register heuristic, so their arguments may still be wrong
+- COM interface methods are not resolved; the metadata has no vtable indices, and the call target is a vtable slot
+  rather than a named export
+- Variadic functions (`printf`-style) have no statically knowable argument count, so only their fixed parameters are
+  decoded
+- Structure parameters are recorded as pointers; fields are not expanded
 
 # Verifying the backend in isolation
 `tests/test_ttd_extractor.py` loads a report and dumps every feature per scope - helpful to confirm expected `API`/`Number`/`String` features:

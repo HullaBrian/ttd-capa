@@ -28,6 +28,20 @@ from typing import Optional
 
 HERE = Path(__file__).resolve().parent
 
+# Recovered guest strings are arbitrary text -- non-Latin paths, HTTP bodies, the
+# occasional lone surrogate from a half-written UTF-16 buffer. When stdout is a
+# console Python uses UTF-8, but when it is redirected to a file it falls back to
+# the locale encoding (cp1252 here), which cannot encode any of that and aborts the
+# whole run. Pin UTF-8 and degrade unencodable characters instead of dying.
+for _stream in (sys.stdout, sys.stderr):
+    if hasattr(_stream, "reconfigure"):
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+
+# Python puts this script's directory first on sys.path, and the capa fork lives in
+# a `capa/` subdirectory of it -- which shadows the installed `capa` package with a
+# namespace package that has no submodules. Drop it; nothing here is imported locally.
+sys.path[:] = [p for p in sys.path if p and Path(p).resolve() != HERE]
+
 from capa.features.address import ProcessAddress, ThreadAddress, DynamicCallAddress  # noqa: E402
 from capa.features.extractors.ttd.models import TtdCall  # noqa: E402
 from capa.features.extractors.ttd.extractor import TtdExtractor  # noqa: E402
@@ -66,9 +80,33 @@ def fmt_arg(a) -> str:
     return repr(a)
 
 
+def fmt_param(p) -> str:
+    """One metadata-decoded parameter as `name=value`.
+
+    Prefers the most informative rendering the extractor managed: decoded text,
+    then symbolic flag names, then a dereferenced pointee, then the raw value.
+    """
+    if p.str_ is not None:
+        value = repr(p.str_)
+    elif p.flags:
+        value = "|".join(p.flags)
+    elif p.float_ is not None:
+        value = repr(p.float_)
+    else:
+        value = fmt_arg(p.value)
+        if p.deref is not None:
+            value += f"->{fmt_arg(p.deref)}"
+    if p.at_return:
+        value += "@ret"
+    return f"{p.name}={value}" if p.name else value
+
+
 def format_call(call: TtdCall) -> str:
     api = f"{call.module}.{call.api}" if call.module else call.api
-    args = ", ".join(fmt_arg(a) for a in call.args)
+    if call.params:
+        args = ", ".join(fmt_param(p) for p in call.params)
+    else:
+        args = ", ".join(fmt_arg(a) for a in call.args)
     ret = "" if call.ret is None else f" -> 0x{call.ret & 0xFFFFFFFFFFFFFFFF:x}"
     return f"{api}({args}){ret}"
 

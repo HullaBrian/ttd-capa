@@ -31,9 +31,35 @@ namespace ttdcapa {
 
     struct Options {
         std::filesystem::path trace;
-        std::filesystem::path sample;  // optional on-disk sample for hashing
-        std::filesystem::path output;  // empty will output to stdout
-        uint64_t max_calls = 0;        // 0 means unlimited
+        std::filesystem::path sample;       // optional on-disk sample for hashing
+        std::filesystem::path output;       // JSON report; empty means none
+        // Binary report (see binreport.hpp). Much faster to write and effectively free to
+        // load, but only the JSON form is what capa consumes.
+        std::filesystem::path binary_output;
+        std::filesystem::path win32_index;  // empty means search the default locations
+        // Directory holding TTDReplay.dll and TTDReplayCPU.dll -- normally WinDbg's
+        // amd64	td folder. Those are Microsoft's and not ours to redistribute, so
+        // rather than requiring them beside the executable, a caller points at wherever
+        // WinDbg already put them. TTDReplay.dll is delay-loaded so this can take effect
+        // at runtime; without the flag the usual DLL search order applies.
+        std::filesystem::path ttd_dlls;
+        std::string dump_sig;               // print one signature and exit; no trace needed
+        uint64_t max_calls = 0;             // 0 means unlimited
+        // Bytes kept from any one counted buffer. Generous on purpose: buffer parameters
+        // are well under 1% of the calls in a typical trace -- on a 654 MB report measured
+        // here, 23k buffers across 3.4M calls totalling 1.1 MB -- so the cap is nowhere
+        // near the dominant cost, while a buffer truncated below the interesting part is
+        // simply lost. 64 KiB covers typical socket and file reads whole.
+        size_t max_buffer = 65536;
+        bool no_metadata = false;           // force the pre-metadata heuristic capture
+        // Emit "[progress] <percent> <calls>" lines on stderr as the sweep runs, and
+        // interrupt it when a line reading "cancel" arrives on stdin -- writing out
+        // whatever was collected up to that point. Both are for a UI driving this as a
+        // child process; interactive use is unaffected.
+        bool report_progress = false;
+        bool cancel_on_stdin = false;
+        // Only affects calls with no metadata: blindly grab four extra stack slots.
+        // Functions we have a signature for always capture their true arity.
         bool with_stack_args = false;
     };
     

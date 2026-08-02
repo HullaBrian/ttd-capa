@@ -56,18 +56,6 @@ namespace ttdcapa {
             return result;
         }
 
-        std::string convertWstringToString(const std::wstring& ws) {
-            if (ws.empty()) {
-                return {};
-            }
-            int needed = ::WideCharToMultiByte(CP_UTF8, 0, ws.data(), static_cast<int>(ws.size()), nullptr, 0, nullptr, nullptr);
-            if (needed <= 0) {
-                return {};
-            }
-            std::string out(static_cast<size_t>(needed), '\0');
-            ::WideCharToMultiByte(CP_UTF8, 0, ws.data(), static_cast<int>(ws.size()), out.data(), needed, nullptr, nullptr);
-            return out;
-        }
     }  // namespace
 
     SampleHashes hashFile(const std::filesystem::path& path) {
@@ -130,7 +118,12 @@ namespace ttdcapa {
             bool ok = getModuleImports(&cursor, mbase, g_report.imports);
             ok = ttdcapa::getModuleSections(&cursor, mbase, g_report.sections) && ok;
 
-            if (getModuleExports(&cursor, mbase, exps)) {
+            // The main image's PE format is what the report calls the trace's
+            // architecture. A WoW64 trace also holds 64-bit system modules, but the
+            // process it recorded is the 32-bit one.
+            bool mainIs64 = true;
+            if (getModuleExports(&cursor, mbase, exps, &mainIs64)) {
+                g_report.arch = mainIs64 ? "x64" : "x86";
                 for (auto& e : exps) {
                     ExportRecord exportRecord;
                     exportRecord.name = e.second;
@@ -156,11 +149,8 @@ namespace ttdcapa {
             }
         }
 
-        size_t thread_count = engine->GetThreadCount();
-        TTD::Replay::ThreadInfo const* thread_list = engine->GetThreadList();
-        for (size_t i = 0; i < thread_count; ++i) {
-            g_report.process.threads.push_back(static_cast<uint64_t>(thread_list[i].UniqueId));
-        }
+        // The thread list is filled in by the caller after this returns; collecting it
+        // here too duplicated every entry.
     }
 
     bool parse_args(int argc, wchar_t** argv, Options& opt) {
@@ -178,6 +168,30 @@ namespace ttdcapa {
             else if (a == L"--with-stack-args") {
                 opt.with_stack_args = true;
             }
+            else if (a == L"--ttd-dlls" && i + 1 < argc) {
+                opt.ttd_dlls = argv[++i];
+            }
+            else if (a == L"--win32-index" && i + 1 < argc) {
+                opt.win32_index = argv[++i];
+            }
+            else if (a == L"--no-metadata") {
+                opt.no_metadata = true;
+            }
+            else if (a == L"--max-buffer" && i + 1 < argc) {
+                opt.max_buffer = static_cast<size_t>(std::wcstoull(argv[++i], nullptr, 10));
+            }
+            else if (a == L"--dump-sig" && i + 1 < argc) {
+                opt.dump_sig = convertWstringToString(argv[++i]);
+            }
+            else if ((a == L"-b" || a == L"--binary") && i + 1 < argc) {
+                opt.binary_output = argv[++i];
+            }
+            else if (a == L"--progress") {
+                opt.report_progress = true;
+            }
+            else if (a == L"--cancel-on-stdin") {
+                opt.cancel_on_stdin = true;
+            }
             else if (!a.empty() && a[0] == L'-') {
                 std::cerr << "unknown option\n";
                 return false;
@@ -190,7 +204,8 @@ namespace ttdcapa {
                 return false;
             }
         }
-        return !opt.trace.empty();
+        // --dump-sig is a metadata-only debug mode, so it doesn't need a trace.
+        return !opt.trace.empty() || !opt.dump_sig.empty();
     }
 
     bool writeReport(std::filesystem::path outputFilePath) {
@@ -239,6 +254,9 @@ namespace ttdcapa {
             call["module"] = moduleStr;
 
             call["api"] = callRecord.api;
+            // Always an array, even when empty -- a zero-parameter function is a
+            // real result, not a missing field.
+            call["args"] = json::array();
             for (ArgValue& argValue : callRecord.args) {
                 if (std::holds_alternative<int64_t>(argValue)) {
                     call["args"].push_back(std::get<int64_t>(argValue));
@@ -247,7 +265,53 @@ namespace ttdcapa {
                 }
             }
 
+            // The rich, metadata-derived view. capa matches on "args"; this is for
+            // ttd-timeline and human triage, so it can afford to be verbose. Absent
+            // entirely when we had no signature, so consumers can tell "no
+            // parameters" apart from "we didn't know".
+            if (callRecord.metadata) {
+                call["params"] = json::array();
+            }
+            for (DecodedArg& decoded : callRecord.params) {
+                json param;
+                param["name"] = decoded.name ? decoded.name : "";
+                param["type"] = decoded.type ? decoded.type : "";
+                param["kind"] = win32meta::kindName(decoded.kind);
+                param["value"] = decoded.raw;
+                if (decoded.has_str) {
+                    param["str"] = decoded.str;
+                }
+                if (decoded.has_deref) {
+                    param["deref"] = decoded.deref;
+                }
+                if (decoded.has_fval) {
+                    param["float"] = decoded.fval;
+                }
+                if (decoded.enum_index != 0xFFFFFFFFu) {
+                    std::vector<std::string> names = win32meta::index().decodeEnum(decoded.enum_index, decoded.raw);
+                    if (!names.empty()) {
+                        param["flags"] = names;
+                    }
+                }
+                if (!decoded.bytes.empty()) {
+                    param["bytes"] = to_hex(decoded.bytes);
+                    // Only when --max-buffer actually cut it short: a string buffer
+                    // trimmed at its NUL is complete, not truncated.
+                    if (decoded.bytes_capped) {
+                        param["bytes_total"] = decoded.bytes_total;
+                    }
+                }
+                if (decoded.is_out) {
+                    param["out"] = true;
+                }
+                if (decoded.from_return) {
+                    param["at_return"] = true;
+                }
+                call["params"].push_back(std::move(param));
+            }
+
             call["ret"] = callRecord.has_ret ? callRecord.ret : 0;
+            call["return_address"] = callRecord.return_address;
 
             process["calls"].push_back(call);
         }
@@ -260,8 +324,12 @@ namespace ttdcapa {
             return false;
         }
 
-        reportFile << report.dump() << std::endl;
+        // Recovered guest memory can always surprise us with a byte sequence that
+        // isn't valid UTF-8. Substituting it beats throwing away an entire trace's
+        // worth of extraction over one bad string.
+        reportFile << report.dump(-1, ' ', false, nlohmann::json::error_handler_t::replace) << std::endl;
         reportFile.close();
         std::cerr << "DONE!\n";
+        return true;
     }
 }
